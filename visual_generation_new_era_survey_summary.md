@@ -346,3 +346,292 @@
 **核心差异化**: 本文的独特价值在于 (1) 面向能力而非架构的分类; (2) 压力测试方法论; (3) 对"生成→智能"进化的系统刻画。
 
 ---
+
+## Discussion Notes: Section 7 深度解读 — Stress Testing the Limits
+
+> 本节是全文最具原创性和实践价值的章节。核心思想：标准 benchmark（FID、CLIP Score、GenAI-Bench）系统性地高估了视觉生成模型的能力，论文提出用 "in-the-wild stress tests" 暴露 SOTA 系统的真实能力边界。
+
+### 方法论核心转变
+
+论文的评估哲学有三个关键转变：
+
+1. **从统计指标到专家约束案例**: 不再追问"FID是多少"，而是问"模型能否遵守这个精确的几何/物理/逻辑约束？"
+2. **从成功导向到失败模式映射**: 每个 case study 的目标是精确定位模型在哪个层级失败、为什么失败
+3. **将失败映射到分类体系**: 每个维度都标注了它测试的是五级分类中的哪一层（L1-L5）
+
+测试主要使用 **Nano Banana** 和 **GPT-Image-2** 作为被测系统（2025-2026 年最前沿闭源系统）。
+
+---
+
+### Dimension I: Spatial Structuring & Layout Precision
+
+> **测试层级**: L2 (Conditional Generation)
+> **核心能力**: 模型能否将空间约束忠实地转化为精确几何排布？
+
+#### Case Study I: Jigsaw Puzzle Challenge (几何刚性 vs 生成幻觉)
+
+**设置**: 给模型打乱的热气球拼图碎片图，要求严格按边缘匹配重组，不能添加或移除内容。
+
+**核心发现**:
+- **语义成功但几何失败**: 模型正确识别语义内容（热气球、蓝天），但完全无法"解决"几何约束
+- **"幻觉陷阱"（Hallucination Trap）**: 不执行刚性变换（旋转/平移）来拼合碎片，而是"做梦"出一张看起来完整的新图像——生成新气球纹理填充空隙
+- **对象持久性缺失**: 拼图碎片的离散边界（tabs and blanks）被溶解
+
+**洞察**: 当前模型运作在 **Probabilistic Correlation (L1/2)** 而非 **Causal/Physical Logic (L5)**。优先让图像"看起来像"完整拼图（语义），而非"解决"拼图（空间）。真正的空间智能需要将图像块视为具有永久属性的刚体——当前 diffusion pipeline 完全缺乏此能力。
+
+#### Case Study II: Metro Map Challenge (拓扑合理性 vs 约束验证)
+
+**设置**: 要求 GPT-Image-2 生成虚构城市地铁图，含精确约束：4条彩色线路、18站点、特定换乘规则（"红蓝线仅一站交叉"、"绿线成环"、"黄线第三站后分叉"）。
+
+**核心发现**:
+- 视觉上专业（干净矢量风格、可读站名），正确包含18站和绿线环形
+- **但多个拓扑约束被违反**: 中心站应四线共享实际仅三线；红蓝线交叉规则未满足；黄线分叉位置错误
+- **关键洞察——生成与验证的鸿沟**: GPT-Image-2 思考了 **13分15秒**仍产出违反约束的结果。但将生成图和原始 prompt 交给 GPT 5.5 验证时，仅 **9秒** 就识别出所有不匹配
+
+**推论**: 构建 constraint-satisfying visual artifact 比 post-hoc verification 困难得多。长时间 deliberation 不一定转化为可靠的约束满足。这支持了 L4（Agentic）中"生成→验证→修正"闭环的必要性。
+
+#### Case Study III: Isometric Tile Map Challenge (坐标落地 vs 视觉合理性)
+
+**设置**: 生成 8×8 等距游戏地图，每格有精确物体放置要求。
+
+**核心发现**:
+- 整体视觉效果出色，高层空间约束基本满足
+- **但精确坐标系统性偏移**: 房子被要求在 F5/G6 实际出现在 F6/G7（偏移一格）
+- 模型将坐标视为"软提示"而非"硬约束"——把 F5、G6 当柔性布局线索而非必须精确执行的地址
+
+**洞察**: 模型能重现"视觉语法"但缺乏执行底层"坐标程序"的机制。等距网格需要离散符号结构，但模型作为连续软约束处理。
+
+---
+
+### Dimension II: Physical Reasoning & Causal Fidelity
+
+> **测试层级**: L5 (World-Modeling Generation)
+> **核心能力**: 模型能否预测物理干预（intervention）下"实际会发生什么"？
+
+#### Case Study I: Fluid Dynamics and Counterfactual Buoyancy
+
+**设置**: 以橙子漂浮水面照片为锚点，两阶段测试：
+- Instruction A: "创建流体动力学解说图"（视觉-文本整合）
+- Instruction B: "如果橙子沉入水中会怎样？"（反事实物理推理）
+
+**核心发现**:
+- Instruction A 成功：产出带向量标注和阿基米德原理标签的解释图
+- Instruction B 部分成功：不仅降低物体位置，还引入**因果产物**——尾随气泡、改变折射光路（沉没场景的正确物理后果）
+- 但 Thinking Trace 揭示推理过程冗余不稳定：反复重访子问题、多次重建力平衡方程
+
+**洞察**: 前沿模型正在弥合 L2 和 L5 之间的鸿沟。"推理-条件化文档编辑"是通向智能体视觉系统的可行路径，但推理过程仍脆弱且昂贵。
+
+#### Case Study II: Action-Conditioned Navigation and Predictive World Modeling
+
+**设置**: 具身驾驶场景——Scenario A（路口转弯后视觉状态）; Scenario B（加速撞车后视觉后果）。
+
+**核心发现**:
+- Scenario A: 成功模拟3D坐标系转换（视角偏移、行人位移）
+- Scenario B: 准确渲染高速视觉标记（运动模糊）和碰撞后果（金属变形碎裂），展示向 L5 的显著进展
+- **但关键安全盲区**: 碰撞测试未明确标记人行横道上的行人——"视觉预测"与"落地因果推理"之间仍有关键差距
+
+**洞察**: 系统优先保证 **语义合理性** 而非 **鲁棒因果能力**。
+
+#### Case Study III: Task-Oriented Action Grounding and Robotic Manipulation
+
+**设置**: 机器人工作台场景，要求可视化"机械爪如何抓取杯子"。
+
+**核心发现**:
+- 成功合成高保真拟人抓握，展示对 **Contact Manifold 动力学**和**力闭合**的隐式理解
+- 正确识别杯子圆柱形可供性（cylindrical affordance）
+- 避免常见网格互穿错误——手指环绕杯面，暗示理解摩擦力和表面法线
+
+**洞察**: 高级 VLM 已可充当 **Visual Policy Proposals** 生成器——从"随机像素鹦鹉"到能运行"心理模拟"的系统的重要一步。但"视觉合理"≠"运动学可执行"。
+
+#### Case Study IV: Spatiotemporal Trajectory Synthesis for Multi-Step Tasks
+
+**设置**: 给桌面场景（绿色勺子+木碗），要求生成"将勺子放入碗中"的轨迹序列。
+
+**核心发现**:
+- **运动学逻辑正确**: 机械臂运动遵循自然弧线，关节约束和末端执行器方向正确
+- **容器感知 (Containment Awareness)**: 最终帧勺子被碗沿正确遮挡——理解3D体积和"inside"物理关系
+- **但**: 前两帧勺子方向错误，视觉细节一致性不足
+
+**洞察**: 模型展现 **Visual Action Planning** 雏形，但"Agentic Intelligence"需要确保轨迹在真实控制系统中可执行。
+
+#### Case Study V: Video Re-rendering with Functional Causal Failure ⭐
+
+**设置**: 将人形机器人多步因果任务视频进行身份替换重渲染，测试功能因果维护。
+
+**核心发现**:
+- **L2 层面成功**: 在整个时空路径上一致渲染单个人形机器人
+- **L5 层面失败**: 原始第2帧的"倒水"动作在编辑后序列中**消失了**——原因存在但结果不随之出现
+- 证明了 **视觉保真度与因果世界模拟的解耦 (decoupling)**
+
+**洞察**: **Section 7 最深刻的发现之一**。当前系统可以在保持高视觉保真的同时完全丧失因果链。视觉质量和因果理解是两个正交维度。
+
+#### Case Study VI: Irreversible State Transitions and Internal Material Consistency
+
+**设置**: 给完整西葫芦和彩虹胡萝卜图像，要求生成"切开后/削皮后"的目标状态。
+
+**核心发现**:
+- 正确渲染内部材料属性（西葫芦切面种子结构、胡萝卜特有颜色渐变在削皮碎屑中保持）
+- 将蔬菜视为3D体积而非2D sprite
+- 但切片精确排列仍有随机性
+
+**洞察**: 展现 **Counterfactual State Synthesis** 能力——能想象物体"外面"基于"里面"。但"视觉合理性"到"物理执行精确性"之间仍有鸿沟。
+
+---
+
+### Dimension III: Visual-Textual Integration & Logic
+
+> **测试层级**: L4 (Agentic Generation)
+> **核心能力**: OCR（读取）→ 推理（求解）→ 渲染（写回）能否在同一视觉基底上闭环？
+
+#### Case Study I: Solving a Physics Exam Directly on the Image ⭐
+
+**设置**: 输入中国高考风格电磁感应物理题扫描图（含中文、内联公式、几何图），要求模型解题并将红色标注解题过程**直接写回原始图像**。
+
+同时测试三种能力：
+- **Dense document OCR**: 从含中文+公式+图的扫描图提取信息
+- **Diagram grounding**: 变量必须与图中正确实体对齐
+- **Layout-aware response generation**: 推导写在合适位置不遮挡原题
+
+**核心发现**:
+- 生成令人印象深刻：用红色公式装饰原图，展示可信工作流（能量守恒→安培力→动力学求解）
+- 数值相互自洽 ($P_A = 0.18N$, $m ≈ 0.0352kg$, $μ ≈ 0.111$, $s ≈ 0.666m$)
+- 保留原题和图表，推导写入空白区域，使用对比色
+- **但 Thinking Trace 揭示**: 推理是"广泛搜索+部分锚定假说+反复自我修正"而非紧凑符号推理——模型反复重访子问题、多次重建力平衡方程
+
+**洞察**: 展示了 **"read-solve-render" 闭环能力**。模型将图像不仅视为感知对象，还视为需要更新的外部工作空间。这比标准 OCR/VQA benchmark 丰富得多。暗示了 **VLM-First, Renderer-Second** 两阶段流水线的涌现。
+
+---
+
+### Dimension IV: Multi-Turn Editing — Markovian Chaining and Silent Drift ⭐
+
+> **测试层级**: L3 (In-Context Generation)
+> **核心能力**: 跨多轮编辑保持像素级保真度和语义一致性
+
+**结构性问题**: 多轮编辑本质是 Markovian 链 $f(I_{t-1}, p_t)$——每轮仅依赖上一轮输出和当前指令——产生两种"漂移"：
+- **Representational drift**: 每轮 encode-decode 的像素级退化
+- **Semantic drift**: 身份、大小、物体持续性的静默变化
+
+#### Case Study I: Cumulative Visual Quality Degradation in Multi-Panel Sequential Editing
+
+**设置**: 空白四格漫画模板，分四轮依次填充面板。每轮只编辑一个面板，其余应像素完美不变。
+
+**核心发现** — 三种累积失败模式：
+1. **Compression-like artifacts**: Turn 1 后出现类 JPEG 噪声逐轮累积
+2. **Text and fine-detail drift**: 早期面板文字/小符号在后续轮次变模糊——尽管从未要求修改
+3. **Non-edited regions not strictly stable**: 逐轮微观偏移（线条粗细、阴影密度），例如 T2 时左上女孩面部表情已与 T0 明显不同
+
+**洞察**: 这是 **L3 in-context generation 的结构性代价**——无法将四格漫画作为独立裁剪区编辑，每轮必须整图通过 encoder-decoder。Long context 解决了语义（模型知道什么不该变）但没解决 pixel-level fidelity（encode/decode 仍退化）。
+
+**实际推论**: 生产级多轮编辑工具需要：(1) 显式非编辑区 mask + copy-paste 回退；(2) 历史锚定机制——而非依赖模型 in-context 能力。
+
+#### Case Study II: Restore-to-Original — Long-Range Recall under Cascading Drift
+
+**设置**: 四轮编辑猫照片：T0(原始) → T1("猫大2倍") → T2("加老鼠") → T3("恢复猫原始大小")。T3 要求回溯到 $I_0$，但 Markovian 机制下模型只能访问 $I_2$。
+
+**核心发现**:
+- T2 第一个失败：加老鼠时猫被**静默重新渲染**——体型缩回、眼神改变
+- T3 决定性失败：(1) 猫被放大到 ≥ $I_1$ 而非恢复 $I_0$ 大小；(2) T2 加入的老鼠**消失了**——从未指令移除
+
+**双重失败**:
+- **Long-range recall failure**: 无法回溯到 $I_0$ 精确状态
+- **Object-persistence failure**: 未被指令提及的物体被丢弃
+
+**洞察**: "恢复原始"是硬回忆需求。证明了 **Markovian 多轮编辑的根本局限**——没有 agentic 决策（选择锚定到哪帧）仅依赖 in-context 能力，长程一致性无法保证。直接激发 L4 中 **history-aware agentic multi-turn editing** 的必要性。
+
+---
+
+### Dimension V: Human-Centric Heredity & Aesthetic Editing
+
+> **测试层级**: L2/L4/L5
+> **核心能力**: 对人脸进行基于遗传学、医学或文化的推理性编辑
+
+#### Case Study I: Predicting Children's Appearance
+
+- Attempt 1（最小提示）: 走捷径——浅层区域混合而非特征融合
+- Attempt 2（显式混合提示）: 展现真正混合——暗发+母亲波浪、更大东亚眼型、肤色插值，符合初级遗传学
+
+**洞察**: 深层推理依赖精确 prompt 引导——"deep instruction understanding"的差距。
+
+#### Case Study II: Plastic Surgery Simulation
+
+- Example 1（"让他变帅"）: 隐式分解为多轴协调编辑（发际线、下颌线、眼区、皮肤）
+- Example 2（"生成分析图表"）: **自适应输出模态**——生成完整临床咨询文档（解剖标注、手术方案、免责声明）
+
+**洞察**: 模型不仅能执行美学编辑，还能根据 prompt 要求自适应切换输出格式——已学习到真实临床文档的"周围约定"。
+
+#### Case Study III: Hairstyle Generation
+
+- 正确解析非英语文化特定术语（锡纸烫）、渲染忠实于类别、干净局部编辑
+
+---
+
+### Dimension VI: Low-level Vision Tasks
+
+> **测试层级**: L1/L2
+> **核心能力**: 精确信号恢复 vs 语义生成
+
+#### Case Study I: OOD Depth Estimation
+
+- 物体识别成功但深度估计失败——不同距离物体被赋予相同深度值
+- **洞察**: 语义分割能力远超几何深度推理能力
+
+#### Case Study II: Low-Level Restoration Across Heterogeneous Degradations
+
+- 超分/低光增强/去噪/去雨/去模糊 5种退化上感知质量统一成功
+- **但并非严格信号恢复**: 模型表现为 **prior-guided image rewriter** 而非经典逆问题求解器
+- **Restoration by Detail Hallucination**: 部分"恢复"的细节是合理虚构而非忠实重建
+
+**洞察**: 感知成功 ≠ 重建保真。在需要严格信号恢复的应用（法医、遥感）中，此区分至关重要。
+
+---
+
+### Dimension VII: Cross-Disciplinary Real-World Applications
+
+> **测试层级**: L4/L5
+> **核心能力**: 需要领域知识、逻辑一致性和专业精度的实际工作流
+
+| Case Study | 成功 | 失败 |
+|-----------|------|------|
+| 唐代长安城规划图 | 宏观结构逻辑完美、俯视视角正确 | 中文标签模糊、多城门重名 |
+| 足球经理 Dashboard | UI 精美、含真实世界数据 | 战术板进球数错、停赛图标颜色错 |
+| LeetCode 解题 | 简单+困难题均生成正确可执行 Python 代码 | — (成功案例) |
+| 黄金比例证明图 | 结构化证明图（五边形+标注+代数推导） | 比例精确度需外部验证 |
+| 多语言美食海报 | 英/中/日/韩四语言基本可读 | 小字号非英文文本模糊 |
+| LIME 药物信息图 | 从简短 prompt 生成多面板科学信息图 | 需验证领域准确性 |
+
+**洞察**: 模型可做"初稿"但需人类验证。宏观设计能力已达实用水平，精细逻辑/文字仍不可靠。
+
+---
+
+### Dimension VIII: High-level Vision Tasks
+
+> **测试层级**: L2
+> **核心能力**: 将视觉理解转化为显式、结构化、可操作的预测
+
+| 任务 | 全局能力 | 精度挑战 |
+|------|---------|---------|
+| OCR | 捕获主要文本区域和大部分内容 | 小字/低对比度文本遗漏 |
+| Keypoint Estimation | 骨架和主要关节大体正确 | 被遮挡关节预测漂移 |
+| Semantic Segmentation | 主要语义区域正确分离 | 物体边界泄漏、杂乱区 mask 粗糙 |
+| Object Detection | 显著物体定位合理 | 拥挤区域重复预测 |
+
+**统一模式**: **全局结构能力 >> 局部精度**。从"感知合理性"到"可操作精度"仍有显著距离。
+
+---
+
+### Section 7 总结表
+
+| 维度 | 测试层级 | 核心发现 | 对领域的启示 |
+|------|---------|---------|-----------|
+| I. 空间结构 | L2 | 语义正确 ≠ 几何正确；约束被视为"软提示" | 需要显式约束验证机制 |
+| II. 物理因果 | L5 | 部分物理推理涌现，但因果链可被静默断裂 | 视觉保真 ≠ 因果理解 |
+| III. 视觉-逻辑 | L4 | read-solve-render 闭环初步可行 | VLM-first + renderer-second |
+| IV. 多轮编辑 | L3 | Markovian 链导致不可逆 drift | 需要 history-aware agentic 架构 |
+| V. 人体美学 | L2-L5 | 深层推理依赖精确 prompt | Prompt engineering 仍是关键 |
+| VI. 低级视觉 | L1-L2 | Prior-guided rewriting ≠ exact restoration | 感知成功 ≠ 信号恢复 |
+| VII. 跨学科应用 | L4-L5 | 宏观设计成功但精细逻辑不可靠 | 模型可做"初稿"需人类验证 |
+| VIII. 高级视觉 | L2 | 全局结构 > 局部精度 | 从"合理"到"精确"距离显著 |
+
+### Meta-Insight
+
+论文通过 8 个维度、20+ 个 case study 证明了统一论点：**当前 SOTA 视觉生成系统运作在"概率相关性"层面（statistical correlation），而非"因果/逻辑"层面（causal/logical reasoning）。它们优先实现"看起来对"（perceptual plausibility），而非"真的对"（structural/causal correctness）。** 当前最强系统仍主要停留在 L2-L3 交界处，L4 和 L5 能力仅有零星涌现。
