@@ -268,6 +268,152 @@ Qwen3-VL-8B + 8.8K 教师轨迹 SFT + GRPO，但**关键创新**是 **Visual Exp
 
 ---
 
+## 8.5 扩展属性矩阵（异同点全展开）
+
+> §8 的横评里把视觉参考、停止判据等放进来了；这里再补上 **是否做 RL / 是否构造数据集 / 是否引入新 benchmark / 是否做奖励建模 / 是否需要训练新模块** 等"工程上要不要投入"维度，方便你直接对着选。
+
+| 属性 | GenAgent | Gen-Searcher | Mind-Brush | Maestro | CRAFT | GEMS | GenEvolve |
+|---|---|---|---|---|---|---|---|
+| **是否做 SFT** | ✅ 32K 两轮轨迹（Qwen3-VL-235B + Gemini 2.5 Pro 蒸） | ✅ 10K 轨迹（Gemini 3 Pro 蒸） | ❌ training-free | ❌ | ❌ | ❌ | ✅ 8.8K 教师轨迹（Seed2.0 + Gemini 3 Pro） |
+| **是否做 RL** | ✅ GRPO（pointwise + pairwise + format） | ✅ GRPO（dual reward = 文本 + K-Score） | ❌ | ❌ | ❌ | ❌ | ✅ GRPO + **Visual Experience Distillation**（反向 KL 自蒸） |
+| **奖励信号** | 0/0.7 outcome + 0.3 pairwise + −0.2 format；reward model = Qwen3-VL-30B-A3B GRM | text-quality (GPT-4.1 score) + K-Score（图像端） | — | DVQ 通过率 + AutoSxS（不参与训练） | DVQ 通过率（不参与训练，仅做停止） | DVQ 通过率（不参与训练，仅做停止 + 选 best） | scalar reward + 5-slot **结构化语言反馈**（search/knowledge/reference/prompt/fail） |
+| **构造新数据集** | 32K SFT + RL prompt（未单独命名，未明确开源） | **Gen-Searcher-SFT-10K + RL-6K** ✅ 全开源 | — | — | — | — | **GenEvolve-Data**（未开源） |
+| **引入新 benchmark** | ❌（用 GenEval++ / WISE / Imagine 等公开 BMK） | ✅ **KnowGen-Bench**（630 人工核验） | ✅ **Mind-Bench**（500 题 / 10 任务，CSA + KCA + KFS） | ❌（用 p2-hard + DSG-1K） | ❌ | ❌ | ✅ **GenEvolve-Bench**（Knowledge-Anchored + Quality-Anchored） |
+| **新训练模块** | 1 个（agent policy） | 1 个（agent policy） | 0 | 0 | 0 | 0 | 1 个 student + 1 个共享权重 privileged teacher |
+| **教师 / 蒸馏来源** | Qwen3-VL-235B + Gemini 2.5 Pro（两轮） | Gemini 3 Pro（轨迹）+ Seed1.8（数据评分） | — | — | — | — | Seed2.0 / Gemini 3 Pro（数据）+ Gemini 3.1 Pro（VED 经验包） |
+| **GPU / 算力** | 未公布 | 未公布（约 H100 集群级） | 0 | 0（API 调用） | 0（API 调用，单图 ≈ $0.0024 reasoning + ~2 次生成） | 0（推理时） | 未公布 |
+| **是否引入显式约束图** | ❌ | ❌ | ❌（5W1H slot） | ✅ DVQ（独立题集） | ✅ **DVQ + 依赖图 G**（DSG schema） | ✅ DVQ（criterion 集，无依赖图） | ❌ |
+| **是否引入 memory** | ❌ | ❌ | ✅ 证据缓冲区 ε_t（textual） | ✅ best-so-far incumbent | ✅ best-so-far incumbent | ✅ **分层 Memory + Compressor**（factual + 蒸过的 experience） | ❌（trajectory 视为一次性） |
+| **是否引入 skill 库** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **SKILL.md repo**（4 个默认技能） | ✅ `query_knowledge(skill_name)`（注入式 prompt 指南） |
+| **是否引入视觉搜索** | ❌ | ✅ `image_search` | ✅ Google Image API | ❌ | ❌ | ❌ | ✅ `image_search` + 缓存 IMG_### |
+| **是否做局部修补 (inpaint)** | ❌ | ❌ | ❌ | ❌ | ❌（全图重生） | ❌ | ❌ |
+| **多 agent / 单 agent** | 单 agent（learned policy） | 单 agent | **多 agent**（Intent + Search + Reasoning + Review + Generation） | **多 agent**（7 角色 MLLM） | 多 agent（DVQGen + VQA + Edit） | **多 agent**（Planner / Decomposer / Verifier / Refiner / Compressor） | 单 agent（teacher / student 共享权重） |
+| **生成器与 agent 是否解耦** | 解耦（生成器为 tool，可换 Sana / Qwen-Image） | 解耦（迁移到 Seedream 4.5 / Nano Banana Pro 都涨） | 解耦 | 部分耦合（依赖 Imagen 3 风格） | 解耦（5 个 backbone 都验证） | 解耦（Z-Image / Qwen-Image-2512 都涨） | 解耦（Qwen-Image-Edit / Nano Banana Pro 都涨） |
+| **代码 / 权重 / 数据** | 占位 / ❌ / ❌ | ✅ / ✅ / ✅ | ✅（Chainlit app） / — / ✅ Mind-Bench | ❌ / — / ❌（prompt 模板在附录） | ❌ / — / ❌（prompt 模板在附录） | ✅ / — / ❌ | ❌ / ❌ / ❌ |
+| **复现门槛**（直观） | 中（要算力 + 蒸数据） | 低（开源齐全） | 低（API 调用即可） | 高（闭源 Imagen 3 + Gemini 全家） | 低（GPT-5-nano + 任意生成器） | 中（Kimi-K2.5 自部署） | 高（要算力 + Gemini 3.1 Pro 蒸经验包） |
+
+### 一句话提炼"异同"
+
+- **相同点**：7 篇都把生成器当黑盒 / 工具；都用 MLLM 做 critic / verifier；都引入了 *某种* 显式停止判据；都给出了 base 模型 vs +method 的逐 prompt gain（不是只刷一个 SOTA）。
+- **核心不同**：
+  - **训练 vs 推理**——GenAgent / Gen-Searcher / GenEvolve 训练 agent；Maestro / CRAFT / Mind-Brush / GEMS 一行训练代码都不写。
+  - **优化对象**——Maestro/CRAFT 只优化 *prompt*；Gen-Searcher 优化 *搜索 + prompt*；GenEvolve 优化 *整条轨迹（搜索 + 知识 + 参考 + program）*；GEMS 把 Memory + Skill 也作为编排对象。
+  - **反馈结构化程度**——CRAFT/Maestro 把 DVQ 通过率视为强约束；GenEvolve 把 critic 反馈结构化成 5-slot；其他都是 scalar。
+  - **是否引入新 BMK**——只有 Gen-Searcher（KnowGen）、Mind-Brush（Mind-Bench）、GenEvolve（GenEvolve-Bench）三家自带 benchmark；其余都用公开 BMK。
+
+---
+
+## 8.6 评估方法专题（重点）
+
+> 这一节把 7 篇用过的 benchmark / scoring / 增益重新拆开列。把"基线分 → +method 分 → Δ"全列出来；同名 benchmark 跨论文 *不一定可比*（VLM judge / 评分协议不同），我会在表格下方点出来。
+
+### 8.6.1 用过的所有 benchmark 一览（按出现频次）
+
+| Benchmark | 测什么 | 评分 | 引入它的论文 | 用过它的本综述论文 |
+|---|---|---|---|---|
+| [GenEval](https://arxiv.org/abs/2310.11513) | 组合性（对象 / 计数 / 颜色 / 位置） | object-detector pass rate | Ghosh et al., 2023 | GenAgent · GEMS · Gen-Searcher（cross） |
+| [GenEval++](https://arxiv.org/abs/2509.NN) / **GenEval2** | GenEval 的进阶版（更多对象 / 更长 prompt） | detector + VLM | Hunyuan / Tencent | **GenAgent**（GenEval++） · **GEMS**（GenEval2） |
+| [WISE](https://arxiv.org/abs/2503.07265) | 世界知识 / 文化常识 | VLM-as-judge | Niu et al., 2025 | GenAgent · Gen-Searcher · Mind-Brush · GEMS · GenEvolve |
+| [DSG-1K](https://arxiv.org/abs/2310.18235) | 复杂 prompt 的 Davidsonian 拆解 | DSG VQA | Cho et al., 2024 | **Maestro** · **CRAFT** |
+| [PartiPrompts / p2-hard](https://arxiv.org/abs/2206.10789) | hard 子集 | DSGScore + AutoSxS | Yu et al., 2022 / Maestro 自筛 | **Maestro** · CRAFT |
+| [T2I-CompBench](https://arxiv.org/abs/2307.06350) | 组合性细粒度 | 多个 detector / VLM | Huang et al., 2023 | CRAFT（部分） |
+| [DPG-Bench](https://arxiv.org/abs/2403.05135) | dense prompt 跟随度 | mPLUG-large VQA | Hu et al., 2024 | GEMS |
+| [OneIG-EN/ZH](https://arxiv.org/abs/2509.NN) | 中英多语 | 综合 | — | GEMS |
+| [Imagine Bench](https://arxiv.org/abs/2509.NN) | 创意 / 写实 | VLM 5-aspect | — | GenAgent |
+| [SpatialGenEval](https://arxiv.org/abs/2509.NN) | 空间布局 | rule-based | — | GEMS |
+| [ArtiMuse](https://arxiv.org/abs/...) | 美学打分 | ArtiMuse 模型 | — | GEMS |
+| [CREA](https://openreview.net/forum?id=VzSjSUE0BZ) | 创意编辑 | MLLM-judge | Venkatesh et al., 2025 | GEMS |
+| [LongText-EN/ZH](https://arxiv.org/abs/...) | 长文本渲染 | NED + Exact-Match | — | GEMS |
+| [RISEBench](https://arxiv.org/abs/2504.02826) | 推理编辑 | rubric | Zhao et al., 2025 | Mind-Brush |
+| [T2I-ReasonBench](https://arxiv.org/abs/2508.17472) | 推理 prompt | rubric | Wang et al., 2025 | Generation Navigator（外延） |
+| **KnowGen-Bench** *(新)* | 知识密集型 T2I（20 类，630 题） | K-Score（VLM rubric） | **Gen-Searcher** | Gen-Searcher |
+| **Mind-Bench** *(新)* | 认知 gap（10 任务 × 50） | CSA / KCA / KFS（GPT-5.1 评） | **Mind-Brush** | Mind-Brush |
+| **GenEvolve-Bench** *(新)* | Knowledge-Anchored + Quality-Anchored 轨迹 | KScore + Quality | **GenEvolve** | GenEvolve |
+
+### 8.6.2 头条 benchmark：基线 → +method → 增益（表）
+
+> "基线"是论文里报告的 base 生成器/方法；"+method"是该论文方法挂上去之后的分数；Δ 是增益。**中括号里是评分协议**——同名 benchmark 评分协议不同时不可直接横比。
+
+| 论文 | Benchmark | 评分协议 | 基线 | +method | Δ | 备注 |
+|---|---|---|---|---|---|---|
+| **GenAgent** | GenEval++ | [Hunyuan VLM judge] | FLUX.1-dev 0.325 | **0.561** (FLUX) / **0.725** (Qwen-Image) | +0.236 / +0.400 | GPT-4o 上限 0.739 |
+| GenAgent | WISE | [VLM-as-judge] | 0.55 | **0.69** / **0.72** | +0.14 / +0.17 | GPT-4o 0.80 |
+| GenAgent | Imagine | [VLM 5-aspect] | 6.072 | **6.825** / **7.794** | +0.75 / +1.72 | GPT-4o 8.560 |
+| **Gen-Searcher** | KnowGen | [K-Score by Seed1.8 / VLM rubric] | Qwen-Image 14.98 | **31.52** | **+16.54** | 自建 BMK |
+| Gen-Searcher | KnowGen（迁移） | 同上 | Seedream 4.5 baseline | **+16** | — | 零样本迁移 |
+| Gen-Searcher | KnowGen（迁移） | 同上 | Nano Banana Pro 50.30 | **53.30** | +3 | 新 SOTA |
+| Gen-Searcher | WISE | [VLM-as-judge] | 0.62 | **0.77** | +0.15 | — |
+| **Mind-Brush** | Mind-Bench CSA | [GPT-5.1 rubric] | Qwen-Image 0.02 | **0.31** | **+0.29** | 自建 BMK |
+| Mind-Brush | WISE | [VLM-as-judge] | 0.62 | **0.78** | +0.16 | — |
+| Mind-Brush | RISEBench | [rubric] | Qwen-Image baseline | 接近 GPT-Image-1 / Nano Banana | — | 论文未给精确数 |
+| **Maestro** | DSG-1K DSGScore | [Gemini 2.0 Flash autorater] | Imagen 3 0.772 | **0.882** | +0.110 | OPT2I 0.838 |
+| Maestro | p2-hard DSGScore | 同上 | 0.826 | **0.921** | +0.095 | LM-BBO 0.859 |
+| Maestro | AutoSxS vs OPT2I（p2-hard / DSG-1K） | [Gemini 2.0 Flash sxs] | OPT2I | **W/T/L = 75.5/11.3/13.2** & **69.9/10.2/19.9** | — | 即使 OPT2I 直接优化 DSGScore，Maestro 仍然胜 |
+| Maestro | 人评 vs LM-BBO | [3 raters] | LM-BBO | **加权 55.8 vs 44.2** | — | — |
+| **CRAFT** | DSG-1K VQA | [GPT-5-nano DVQ] | FLUX-Schnell 0.78 | **0.86** | +0.08 | — |
+| CRAFT | DSG-1K Auto-SxS | [GPT-5-nano sxs] | FLUX-Schnell 0.21 | **0.744** | **+0.534** | sxs 上跨度更大 |
+| CRAFT | DSG-1K（Qwen-Image） | 同上 | 0.864 | **0.946** | +0.082 | DVQ-VQA 接近天花板 |
+| CRAFT | Parti-Prompt Auto-SxS | 同上 | FLUX-Schnell 0.19 | **0.756** | **+0.566** | — |
+| CRAFT | text rendering NED / EM | [OCR + 字符串匹配] | FLUX-Schnell baseline | **+7.16% / +12.91%** | — | 一个普适 DVQ 专治 text |
+| CRAFT | DSG-1K DSGScore（vs baseline 全家） | [GPT-5-nano DVQ] | Maestro 0.882 | **0.91** | +0.028 | 唯一直接和 Maestro 同台数 |
+| **GEMS** | GenEval | [detector] | Z-Image-Turbo 0.77 | **0.86** | +0.09 | 接近天花板 |
+| GEMS | **GenEval2** | [VLM judge] | Z-Image-Turbo 31.0 | **63.5** | **+32.5** | 6B 翻 Nano Banana 2 |
+| GEMS | GenEval2（Qwen-Image-2512） | 同上 | 29.0 | **70.4** | **+41.4** | — |
+| GEMS | DPG-Bench | [mPLUG VQA] | 85.08 | 86.01 | +0.93 | — |
+| GEMS | WISE | [VLM judge] | 0.57 | **0.81** | +0.24 | — |
+| GEMS | Mainstream Avg（5 BMK） | — | 60.29 | **74.51** | **+14.22** | — |
+| GEMS | Downstream Avg（4 BMK：LongText/Spatial/CREA/ArtiMuse） | — | 58.41 | **72.44** | **+14.03** | — |
+| **GenEvolve** | GenEvolve-Bench KScore | [VLM rubric] | Qwen-Image-Edit 0.3493 | **0.3663** | +0.0170 | 自建 BMK |
+| GenEvolve | GenEvolve-Bench KScore（Nano Banana Pro） | 同上 | 0.5612 | **0.5739** | +0.0127 | 当前 SOTA |
+| GenEvolve | WISE WiScore | [VLM judge] | — | **0.82** | — | > GPT-4o 0.80 |
+
+### 8.6.3 同台横比（剔除评分协议差异后能直接对照的子集）
+
+> 把所有用了 **DSG-1K + 类 DSG VQA judge** 的数据放一张表里。注意：**Maestro 用 Gemini 2.0 Flash 当 judge，CRAFT 用 GPT-5-nano，分数不严格可比**——但都是同一指标族，趋势可信。
+
+| 方法 | DSG-1K DSGScore | 协议 | 备注 |
+|---|---|---|---|
+| Original (Imagen 3) | 0.772 | Gemini 2.0 Flash | Maestro 论文 |
+| Original (FLUX-Schnell) | 0.786 | GPT-5-nano | CRAFT 论文 |
+| Rewrite | 0.815 | Gemini | Maestro |
+| Promptist | 0.849 | Gemini | Maestro |
+| LM-BBO | 0.806 | Gemini | Maestro |
+| OPT2I | 0.838 | Gemini | Maestro |
+| **Maestro** | **0.882** | Gemini | — |
+| **CRAFT (FLUX-Schnell)** | **0.857** | GPT-5-nano | DSG 列 |
+| **CRAFT (Qwen-Image)** | **0.932** | GPT-5-nano | — |
+| **CRAFT (FLUX-2 Pro)** | **0.91** | GPT-5-nano | 论文同台数 |
+
+> WISE 上唯一能横比的（同公开协议）：
+> Qwen-Image base 0.62 → **+Mind-Brush 0.78** ≈ **+Gen-Searcher 0.77**；FLUX base 0.55 → **+GenAgent 0.69**；Z-Image-Turbo base 0.57 → **+GEMS 0.81**（**最高**）。
+
+### 8.6.4 评分协议重要差异（你看 paper 时容易踩的坑）
+
+1. **Maestro vs CRAFT 在 DSG-1K 上的分数不严格可比**——Maestro 用 Gemini 2.0 Flash 当 autorater，CRAFT 用 GPT-5-nano。GPT-5-nano 一般给分更"宽松"，所以 CRAFT 表里 baseline 也比 Maestro 表里的 baseline 高。
+2. **WISE 各家 baseline 不一样**——同样写"Qwen-Image baseline"，Mind-Brush 报 0.62，Gen-Searcher 报 0.62，但 GEMS 报 0.57（用 Z-Image-Turbo 作 base）。比较 Δ 时要看清楚 base 是谁。
+3. **GenEval ≠ GenEval2 ≠ GenEval++**——三个不是同一个 BMK：
+   - GenEval（原版，Ghosh 2023，6 类对象-属性）：现在大家基本刷到 0.85+；
+   - GenEval++（GenAgent 用，Hunyuan）：更长 prompt + 更难组合；
+   - GenEval2（GEMS 用）：Nano Banana 2 也才 ~76；区分度最大。
+4. **K-Score（Gen-Searcher）vs KScore（GenEvolve）名称撞车但不是同一个**——前者是 Seed1.8 给的 5-aspect 评分，后者是 GenEvolve-Bench 自带的 VLM rubric。
+5. **AutoSxS 受 judge 偏置影响巨大**——CRAFT 用 GPT-5-nano 自评 sxs，能把"+CRAFT vs base"做到 0.21 → 0.744（涨 50+ 点）；而人评胜率（CRAFT Fig 7-10，20 评估员）只有 50–65% 区间，仍然显著但远没有 sxs 数字那么夸张。
+6. **没人正面回答 "+agent 后 inference cost 涨多少"**——只有 CRAFT 给了 $0.0024 / 2 iter 的 reasoning 成本与 30 s/iter 延迟，**这是这次综述里最值得借鉴的报告习惯**。
+
+### 8.6.5 增益绝对值排序（拿同一篇里的"最好版本"算）
+
+按 **绝对增益** 排：
+1. **GEMS** GenEval2 +32.5（Z-Image-Turbo），更猛的是 Qwen-Image-2512 +41.4
+2. **CRAFT** Auto-SxS +0.534（FLUX-Schnell on DSG-1K）—— sxs 类指标
+3. **Mind-Brush** Mind-Bench CSA +0.29（自建 BMK，base 几乎 0）
+4. **Gen-Searcher** KnowGen +16.54（自建 BMK）
+5. **GenAgent** GenEval++ +0.236（FLUX）
+6. **Maestro** DSG-1K DSGScore +0.110
+7. **GenEvolve** GenEvolve-Bench KScore +0.017（自建 BMK，base 已经很高）
+
+> **解读**：增益数字最大的几个（GEMS、CRAFT、Mind-Brush）都共享一个模式：选了一个**主流模型本就吃力的"难"benchmark**，让弱 baseline 跑出大涨幅；其余几篇要么挑了已经接近天花板的 BMK（GenEvolve），要么 baseline 本来就强（Maestro 用 Imagen 3）。所以"+30 分"和"+0.02 分"实际工程价值不能简单比，要看 base 起点 + 评分协议。
+
+---
+
 ## 9. 共同的失败模式 / 开放问题
 
 跨 7 篇，可以观察到几个共性短板：
