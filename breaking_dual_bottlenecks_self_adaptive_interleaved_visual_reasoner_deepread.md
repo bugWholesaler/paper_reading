@@ -1,120 +1,120 @@
-# Breaking Dual Bottlenecks: Evolving Unified Multimodal Models into Self-Adaptive Interleaved Visual Reasoners
+# 打破双重瓶颈：将统一多模态模型演化为自适应交错视觉推理器
 
-> **Authors:** Qingyang Liu, Bingjie Gao, Canmiao Fu, Zhipeng Huang, Chen Li, Feng Wang, Shuochen Chang, Shaobo Wang, Yali Wang, Keming Ye, Jiangtong Li, Li Niu (SJTU / WeChat Vision, Tencent / SIAT-CAS / Tongji / miguo.ai)
-> **Venue:** ICML 2026 (PMLR 306)
-> **Link:** [arXiv:2605.14709](https://arxiv.org/abs/2605.14709)
-> **Code / Weights / Data:** Code released on GitHub (link in paper); weights ❌; data ❌ at submission time
+> **作者：** Qingyang Liu, Bingjie Gao, Canmiao Fu, Zhipeng Huang, Chen Li, Feng Wang, Shuochen Chang, Shaobo Wang, Yali Wang, Keming Ye, Jiangtong Li, Li Niu（上海交通大学 / 微信视觉，腾讯 / 中科院深圳先进院 / 同济大学 / miguo.ai）
+> **会议：** ICML 2026 (PMLR 306)
+> **链接：** [arXiv:2605.14709](https://arxiv.org/abs/2605.14709)
+> **代码 / 权重 / 数据：** 代码已在 GitHub 发布（论文中提供链接）；权重 ❌；数据 ❌（投稿时未公开）
 
 ---
 
 ## TL;DR
 
-The paper introduces **SAIR (Self-Adaptive Interleaved Reasoner)**, a unified multimodal-model framework that learns to *autonomously pick* between three image-generation strategies — **direct generation**, **self-reflection**, and **multi-step planning** — depending on instruction complexity. Built on top of [Emu3.5](https://arxiv.org/abs/2510.26583), trained on a 50K hierarchically-curated interleaved dataset using SFT-with-selective-loss + GRPO-with-step-wise-reward + an intra-group complexity penalty, it reaches **GenEval 0.89**, **KRIS-Bench 80.18**, and **OmniContext 9.35** — beating Emu3.5 (0.86 / 73.75 / 8.82) and even GPT-4o (80.09 / 8.80) on KRIS / OmniContext while *cutting* average images per query from 2.45 (SFT-only) to 1.56.
+本文提出 **SAIR（Self-Adaptive Interleaved Reasoner，自适应交错推理器）**——一种统一多模态模型框架，能够根据指令复杂度**自主选择**三种图像生成策略之一：**直接生成（Direct）**、**自反思（Self-Reflection）** 与 **多步规划（Multi-step Planning）**。SAIR 基于 [Emu3.5](https://arxiv.org/abs/2510.26583) 构建，使用一个层次化筛选的 50K 交错数据集，结合 SFT-with-selective-loss + GRPO-with-step-wise-reward + 组内复杂度惩罚进行训练，最终取得 **GenEval 0.89**、**KRIS-Bench 80.18**、**OmniContext 9.35** 的成绩——超越 Emu3.5（0.86 / 73.75 / 8.82），在 KRIS / OmniContext 上甚至超过 GPT-4o（80.09 / 8.80），同时把每个 query 的平均图像数从 SFT-only 的 2.45 *降低*到了 1.56。
 
 ---
 
-## 1. Background & Motivation
+## 1. 背景与动机
 
-### 1.1 Problem Definition
+### 1.1 问题定义
 
-Unified multimodal models (UMMs) — those that share one backbone for both visual *understanding* and visual *generation* — promise to fuse Chain-of-Thought (CoT) reasoning into image synthesis. The target task in this paper is **anything-to-image (X2I)**: given any combination of text, reference image(s), layout, sketch, or multi-image references, produce a faithful output image. X2I subsumes T2I, instruction-based image editing, subject-driven generation, and multi-reference composition.
+统一多模态模型（Unified Multimodal Models, UMMs）——即使用单一主干同时承担视觉*理解*与视觉*生成*的模型——承诺把 Chain-of-Thought (CoT) 推理融入图像合成。本文的目标任务是 **anything-to-image (X2I)**：给定文本、参考图像、布局、草图或多图参考的任意组合，生成一张忠实的输出图像。X2I 涵盖了 T2I、基于指令的图像编辑、subject-driven 生成与多参考合成。
 
-### 1.2 The "Understanding–Generation Gap"
+### 1.2 “理解—生成鸿沟”
 
-Even when a UMM clearly *parses* a prompt correctly (it can describe what should happen in text), its pixel output often *fails to execute* what was understood. The authors split this gap into two named bottlenecks:
+即使一个 UMM 已经清楚地*解析*了 prompt（它能用文字描述应该发生什么），其像素输出仍常常*无法执行*所理解的内容。作者将这种鸿沟拆分为两个具名瓶颈：
 
-- **Attention entanglement bottleneck.** A complex multi-intent prompt — e.g. *"halve the right sofa, add a floor lamp in the freed space, draw the updated top-down view"* — is too dense for one-pass synthesis; entangled attention smears constraints across subjects.
-- **Visual refinement bottleneck.** A single denoising / next-token pass is not robust enough; defects creep in (wrong color, wrong count, hallucinated extras), and *unstructured* critique is too noisy a signal to repair them iteratively.
+- **注意力纠缠瓶颈（Attention entanglement）。** 一个具有多重意图的复杂 prompt——例如*“将右边的沙发缩为一半，在腾出的空间放一盏落地灯，画出更新后的俯视图”*——对单步合成而言信息密度太大；纠缠的注意力会把约束散布到不同主体上。
+- **视觉细化瓶颈（Visual refinement）。** 单次去噪 / 下一 token 推理过程不够鲁棒；瑕疵会悄悄出现（颜色错误、数量错误、幻觉物体），而*非结构化*的批评信号过于嘈杂，难以迭代修复。
 
-### 1.3 Limitations of Prior Work
+### 1.3 既有工作的局限
 
-The authors group prior remedies into two rigid pipelines, both of which they argue are insufficient:
+作者把先前的解决方案归为两条僵化的流水线，并指出二者都不够：
 
-- **Plan-then-Generate** ([T2I-R1, Jiang et al. 2025a](https://arxiv.org/abs/2505.00703); [ImageGen-CoT, Liao et al. 2025a](https://arxiv.org/abs/2503.19312); [Uni-CoT, Qin et al. 2025](https://arxiv.org/abs/2508.05606)) writes a textual plan first and then renders. Verdict: "blind" — the plan is decoupled from the model's actual generative limits, producing unexecutable plans on complex edits.
-- **Generate-then-Reflect** ([Reflect-DiT, Li et al. 2025b](https://arxiv.org/abs/2503.12271); [Reflection-Tuning, Zhuo et al. 2025](https://openaccess.thecvf.com/content/ICCV2025); [Thinking-while-Generating, Guo et al. 2025a](https://arxiv.org/abs/2511.16671)) generates, critiques, then re-generates. Verdict: critiques mix *error analysis* and *fix suggestion* in one blob, so multi-error cases are hard to disentangle; many implementations also bolt together separate critic + generator models, breaking the unified-model promise.
+- **Plan-then-Generate（先规划后生成）**（[T2I-R1, Jiang et al. 2025a](https://arxiv.org/abs/2505.00703); [ImageGen-CoT, Liao et al. 2025a](https://arxiv.org/abs/2503.19312); [Uni-CoT, Qin et al. 2025](https://arxiv.org/abs/2508.05606)）先写一段文字 plan，再渲染。结论：“盲目”——计划与模型实际生成能力解耦，对复杂编辑会产出不可执行的计划。
+- **Generate-then-Reflect（先生成后反思）**（[Reflect-DiT, Li et al. 2025b](https://arxiv.org/abs/2503.12271); [Reflection-Tuning, Zhuo et al. 2025](https://openaccess.thecvf.com/content/ICCV2025); [Thinking-while-Generating, Guo et al. 2025a](https://arxiv.org/abs/2511.16671)）先生成，再批评，再重新生成。结论：批评把*错误分析*和*修复建议*混在一团，多错误情形难以拆分；不少实现还把 critic 与 generator 拼成两个独立模型，破坏了“统一模型”的承诺。
 
-Crucially, no existing work *both* attacks attention entanglement *and* visual refinement *and* learns to choose between them.
+更关键的是，没有任何已有工作*同时*打击注意力纠缠*和*视觉细化两条瓶颈，*并*学会在两者之间做选择。
 
-### 1.4 The Gap This Paper Fills
+### 1.4 本文填补的空缺
 
-The authors want a single UMM that, conditioned on instruction complexity, **adaptively** routes between (a) one-pass generation, (b) iterative structured self-reflection, and (c) explicit multi-step decomposition — and that does so *cheaply*, i.e. without "over-reasoning" on simple prompts.
-
----
-
-## 2. Related Work
-
-### 2.1 Unified Large Multimodal Models
-
-Three broad families: diffusion-based ([MMaDA, Yang et al. 2025](https://arxiv.org/abs/2505.15809); [DualDiff, Li et al. 2025c](https://arxiv.org/abs/...)); autoregressive ([Janus-Pro, Chen et al. 2025c](https://arxiv.org/abs/2501.17811); [Emu3, Wang et al. 2024b](https://arxiv.org/abs/2409.18869); [OneCAT, Li et al. 2025a](https://arxiv.org/abs/2509.03498)); hybrid AR-diffusion ([Show-o, Xie et al. 2024](https://arxiv.org/abs/2408.12528); [Transfusion, Zhou et al. 2024](https://arxiv.org/abs/2408.11039); [JanusFlow, Ma et al. 2025c](https://arxiv.org/abs/...)). All struggle with the understanding–generation gap.
-
-### 2.2 Reasoning in Generation
-
-Two threads: textual planners injected into generation ([T2I-R1](https://arxiv.org/abs/2505.00703), [Uni-CoT](https://arxiv.org/abs/2508.05606), [VACoT, Ye et al. 2025d](https://arxiv.org/abs/2512.19686), [DRACO](https://arxiv.org/abs/2512.05112)); and critique-loop refiners ([Image Generation CoT, Guo et al. 2025b](https://arxiv.org/abs/2501.13926); [ReasonEdit, Yin et al. 2025](https://arxiv.org/abs/2511.22625)). RL fine-tuning ([DeepSeekMath GRPO, Shao et al. 2024](https://arxiv.org/abs/2402.03300); [DPO, Rafailov et al. 2023](https://arxiv.org/abs/2305.18290)) has become standard for plugging in self-evaluation rewards.
-
-### 2.3 Positioning
-
-SAIR is the first to (i) train a *single* unified model to switch between three modes adaptively, (ii) combine plan and reflect *natively* in one architecture, and (iii) explicitly penalize redundant reasoning via an intra-group complexity term — preventing the common over-reasoning failure of CoT-trained generators.
+作者希望得到这样一个 UMM：依据指令复杂度，**自适应**地在 (a) 单次生成、(b) 迭代式结构化自反思、(c) 显式多步分解之间路由，并且做得*经济*——即不要在简单 prompt 上“过度推理”。
 
 ---
 
-## 3. Core Method
+## 2. 相关工作
 
-The paper organises its own narrative as: a hierarchical **data construction pipeline** that produces three execution-mode trajectories (§3); then a two-stage **training** pipeline with SFT and RL (§4). I follow that order. The high-level paradigm is shown in Figure 1.
+### 2.1 统一多模态大模型
 
-![Figure 1. Self-Adaptive Interleaved Visual Reasoner — paradigm comparison.](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig1_paradigm.png)
+三大家族：基于扩散（[MMaDA, Yang et al. 2025](https://arxiv.org/abs/2505.15809); [DualDiff, Li et al. 2025c](https://arxiv.org/abs/...)）；自回归（[Janus-Pro, Chen et al. 2025c](https://arxiv.org/abs/2501.17811); [Emu3, Wang et al. 2024b](https://arxiv.org/abs/2409.18869); [OneCAT, Li et al. 2025a](https://arxiv.org/abs/2509.03498)）；AR-扩散混合（[Show-o, Xie et al. 2024](https://arxiv.org/abs/2408.12528); [Transfusion, Zhou et al. 2024](https://arxiv.org/abs/2408.11039); [JanusFlow, Ma et al. 2025c](https://arxiv.org/abs/...)）。它们都受困于理解—生成鸿沟。
 
-### 3.1 Stage A — Data Construction (hierarchical escalation)
+### 2.2 生成中的推理
 
-Two external "agent" models drive the pipeline:
+两条线索：把文本规划器注入生成（[T2I-R1](https://arxiv.org/abs/2505.00703)、[Uni-CoT](https://arxiv.org/abs/2508.05606)、[VACoT, Ye et al. 2025d](https://arxiv.org/abs/2512.19686)、[DRACO](https://arxiv.org/abs/2512.05112)）；以及 critique-loop 细化器（[Image Generation CoT, Guo et al. 2025b](https://arxiv.org/abs/2501.13926); [ReasonEdit, Yin et al. 2025](https://arxiv.org/abs/2511.22625)）。RL 微调（[DeepSeekMath GRPO, Shao et al. 2024](https://arxiv.org/abs/2402.03300); [DPO, Rafailov et al. 2023](https://arxiv.org/abs/2305.18290)）已经成为接入 self-evaluation 奖励的标准手段。
 
-- **ANALYZER** = [Qwen3-VL-235B](https://arxiv.org/abs/2511.21631) — used as evaluator, failure diagnostician, and task planner.
-- **GENERATOR** = [Gemini-3-Pro-Image](https://aistudio.google.com/models/gemini-3-pro-image) — synthesises image content from reflection prompts and step-wise sub-instructions.
+### 2.3 本文定位
 
-The ANALYZER scores every output along **four** axes (1–5 scale per axis, validated to bind to the same axes used at test time):
+SAIR 是首个：(i) 训练*单*个统一模型在三种模式之间自适应切换、(ii) 在同一架构内*原生*结合规划与反思、(iii) 通过组内复杂度项*显式*惩罚冗余推理——避免 CoT 训练的生成器普遍存在的“过度推理”失败模式。
 
-1. **Instruction** — were the requested edits executed?
-2. **Consistency** — are unedited regions / reference identities preserved?
-3. **Quality** — visual fidelity, freedom from artifacts.
-4. **Knowledge** — physical / commonsense plausibility (gravity, scale, shadows, scientific accuracy).
+---
 
-The four score-prompts are reproduced in the appendix and listed verbatim below in §4 of this write-up. Given an X2I sample, the pipeline escalates as follows:
+## 3. 核心方法
 
-#### 3.1.1 Mode 1 — Direct Generation
+论文叙事顺序：先讲一个层次化的**数据构造管线**，产出三种执行模式的轨迹（§3）；再讲两阶段**训练**管线，包含 SFT 与 RL（§4）。我也按此顺序展开。整体范式见图 1。
 
-- **Purpose & placement.** Cheapest path: keep samples that the baseline UMM solves on the first try.
-- **Inputs.** `(reference image(s), instruction)`.
-- **Procedure.** Baseline UMM produces image `G₁`; ANALYZER produces evaluation `E₁`. If all four axes pass, the trajectory `{G₁, E₁}` is archived as a *Direct* sample.
-- **Why this matters.** Mode 1 represents the "no reasoning needed" base rate; the model must learn that some prompts genuinely need only single-pass synthesis.
+![图 1. Self-Adaptive Interleaved Visual Reasoner——范式对比。](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig1_paradigm.png)
 
-#### 3.1.2 Mode 2 — Self-Reflection
+### 3.1 阶段 A——数据构造（层次化升级）
 
-- **Purpose & placement.** Triggered when `G₁` fails ANALYZER validation. Tries to repair via at most **three** reflective iterations.
-- **Per-iteration loop:**
-  1. ANALYZER consumes `(original instruction, reference image, evaluation text Eₖ, rejected image Gₖ)` and emits a *reflection prompt* `Rₖ` consisting of two structured fields — **Failure Analysis** and **Improvement Plan**.
-  2. GENERATOR conditions on `Rₖ` and produces `G_{k+1}`.
-  3. ANALYZER produces `E_{k+1}`.
-  4. If all four scores pass, exit; else loop, capped at 3 iterations.
-- **Recorded trajectory.** `⋃_{i=1}^{K-1}{G_i, E_i, R_i} ∪ {G_K, E_K}` where `K` is the index of the first successful generation. Crucially the trajectory *interleaves* image and text tokens — the model is being taught to emit textual reasoning and pixels in the same autoregressive stream.
-- **Reflection-prompt template.** Reproduced in Fig. 13 of the paper; the auditor prompt explicitly enumerates failure types (*Targeting Error / Over-editing / Under-editing / Visual Artifacts / Logic Flaws*) and forces JSON output `{"failure_analysis": ..., "improvement_plan": ...}` — this *structuring* of the critique is what distinguishes the dataset from prior unstructured "Generate-then-Reflect" pipelines.
+两个外部“agent”模型驱动整个管线：
 
-#### 3.1.3 Mode 3 — Multi-step Generation (escalation)
+- **ANALYZER** = [Qwen3-VL-235B](https://arxiv.org/abs/2511.21631)——同时充当评估器、失败诊断器与任务规划器。
+- **GENERATOR** = [Gemini-3-Pro-Image](https://aistudio.google.com/models/gemini-3-pro-image)——根据反思 prompt 与子步骤指令合成图像。
 
-- **Purpose & placement.** Triggered only when the 3-iteration reflection loop fails. The pipeline does **not** auto-escalate every failure — instead, the ANALYZER first diagnoses the *root cause* of the failure.
-- **Filter rule.** If the diagnosis is "excessive prompt complexity", the pipeline escalates to multi-step decomposition. Otherwise (e.g. specialised domain knowledge missing) the sample is **filtered out**. This filter is what keeps the dataset clean; cases the system fundamentally cannot solve by re-planning are rejected rather than turned into noisy training data.
-- **Decomposition prompt.** Verbatim in Fig. 14 of the paper. Key planning rules: 2–5 atomic sub-steps; **local edits before global atmosphere**; "move" decomposed into "remove from old position, then add to new"; later sub-steps must update terminology to match changes from earlier sub-steps; each sub-step must explicitly state that all unrelated regions remain unchanged.
-- **Execution.** ANALYZER decomposes the original instruction into `S₂, S₃, …, S_{N+1}`. GENERATOR executes them sequentially; ANALYZER evaluates each intermediate `Gᵢ` with `Eᵢ`. If the final step passes, the *previous failed reflection chain* is **pruned** from the trajectory (a clean training signal — the model never sees the dead-end reflections).
-- **Recorded trajectory.** `{G₁, E₁} ∪ ⋃_{i=2}^{N+1}{Sᵢ, Gᵢ, Eᵢ}` where `G₁`/`E₁` are the original direct attempt and its diagnosis; `Sᵢ` is the sub-instruction; `Gᵢ`/`Eᵢ` are the per-sub-step image and evaluation.
+ANALYZER 沿**四个**维度评分（每轴 1–5 分，已验证与测试时使用同一套维度）：
 
-#### 3.1.4 Human Verification
+1. **Instruction（指令遵循）**——要求的编辑是否被执行？
+2. **Consistency（一致性）**——未编辑区域 / 参考身份是否被保留？
+3. **Quality（质量）**——视觉保真度，是否无瑕疵。
+4. **Knowledge（知识）**——物理 / 常识合理性（重力、尺度、阴影、科学准确性）。
 
-Every synthesised instance — across all three modes — is reviewed by **two human annotators** for both final outcome and the logical coherence of intermediate reasoning. Only instances unanimously accepted are retained. The paper does **not specify** annotator count, qualifications, IAA score, payment, or time budget.
+四个评分 prompt 在附录中完整给出，本写作 §4 会逐字列出。给定一条 X2I 样本，管线按以下方式逐级升级：
 
-Pseudocode of the full pipeline (my reconstruction):
+#### 3.1.1 Mode 1——直接生成
+
+- **目的与定位。** 最便宜的路径：保留基线 UMM 一次就能解决的样本。
+- **输入。** `(参考图像, 指令)`。
+- **流程。** 基线 UMM 生成图像 `G₁`；ANALYZER 给出评估 `E₁`。如果四轴全部通过，则把轨迹 `{G₁, E₁}` 归档为 *Direct* 样本。
+- **意义。** Mode 1 代表“无需推理”的基线比例；模型必须学会某些 prompt 确实只需要单次合成。
+
+#### 3.1.2 Mode 2——自反思
+
+- **目的与定位。** 当 `G₁` 未通过 ANALYZER 校验时触发。最多通过**三次**反思迭代尝试修复。
+- **每轮迭代：**
+  1. ANALYZER 输入 `(原始指令, 参考图像, 评估文本 Eₖ, 被拒图像 Gₖ)`，输出一个*反思 prompt* `Rₖ`，包含两个结构化字段——**Failure Analysis**（失败分析）与 **Improvement Plan**（改进方案）。
+  2. GENERATOR 以 `Rₖ` 为条件产出 `G_{k+1}`。
+  3. ANALYZER 输出 `E_{k+1}`。
+  4. 若四轴全部通过则退出；否则继续，最多 3 轮。
+- **记录的轨迹。** `⋃_{i=1}^{K-1}{G_i, E_i, R_i} ∪ {G_K, E_K}`，其中 `K` 是首次成功生成的索引。关键在于这条轨迹*交错*了图像与文本 token——模型被教会在同一自回归流中输出文字推理与像素。
+- **反思 prompt 模板。** 论文图 13 给出原文；audit prompt 显式枚举失败类型（*Targeting Error / Over-editing / Under-editing / Visual Artifacts / Logic Flaws*），并强制 JSON 输出 `{"failure_analysis": ..., "improvement_plan": ...}`——critique 的*结构化*正是该数据集与既往非结构化 “Generate-then-Reflect” 管线的核心区别。
+
+#### 3.1.3 Mode 3——多步生成（升级路径）
+
+- **目的与定位。** 仅在 3 次反思迭代失败后触发。管线**不**会自动把所有失败都升级——而是先让 ANALYZER 诊断失败的*根本原因*。
+- **过滤规则。** 若诊断结果为“prompt 复杂度过高”，则升级到多步分解；否则（例如缺乏专业领域知识）该样本被**过滤掉**。这一过滤是数据集干净的关键；对那些靠重新规划也无法系统解决的样本，宁可丢弃也不变成噪声训练数据。
+- **分解 prompt。** 论文图 14 给出原文。关键规划规则：2–5 个原子子步；**先局部编辑再全局氛围**；“移动”分解为“先从旧位置移除，再加到新位置”；后续子步必须更新术语以匹配前序子步的修改；每个子步必须显式声明所有不相关区域保持不变。
+- **执行。** ANALYZER 把原始指令分解为 `S₂, S₃, …, S_{N+1}`。GENERATOR 顺序执行；ANALYZER 用 `Eᵢ` 评估每个中间 `Gᵢ`。若最后一步通过，则前面*失败的反思链*会从轨迹中**剪掉**（一个干净的训练信号——模型永远不会看到死胡同的反思）。
+- **记录的轨迹。** `{G₁, E₁} ∪ ⋃_{i=2}^{N+1}{Sᵢ, Gᵢ, Eᵢ}`，其中 `G₁`/`E₁` 是原始的直接尝试与其诊断；`Sᵢ` 是子指令；`Gᵢ`/`Eᵢ` 为该子步的图像与评估。
+
+#### 3.1.4 人工校验
+
+每一条合成样本——三种模式都包括——都由**两名标注员**审核，覆盖最终结果与中间推理的逻辑一致性。仅有获得双方一致接受的样本才会保留。论文**未公开**标注员人数、资质、IAA 分数、报酬或耗时预算。
+
+完整管线的伪代码（我的重构）：
 
 ```
 def construct_sample(x, instruction):
     G1 = UMM.generate(x, instruction)
-    E1 = ANALYZER.evaluate(x, instruction, G1)            # 4 axes
+    E1 = ANALYZER.evaluate(x, instruction, G1)            # 4 个维度
     if all_pass(E1):
         return DirectSample(G1, E1)
 
@@ -129,10 +129,10 @@ def construct_sample(x, instruction):
 
     cause = ANALYZER.diagnose_root_cause(history)
     if cause != "excessive_complexity":
-        return None                                         # filter out
+        return None                                         # 过滤掉
 
-    sub_steps = ANALYZER.decompose(instruction)             # 2–5 atomic prompts
-    intermediates = [(G1, E1)]                              # keep direct attempt as failure case
+    sub_steps = ANALYZER.decompose(instruction)             # 2–5 个原子 prompt
+    intermediates = [(G1, E1)]                              # 保留直接尝试作为失败案例
     img_state = G1
     for S in sub_steps:
         Gi = GENERATOR.step(img_state, S)
@@ -140,140 +140,140 @@ def construct_sample(x, instruction):
         if not all_pass(Ei): return None
         intermediates.append((S, Gi, Ei))
         img_state = Gi
-    return MultiStepSample(intermediates)                   # reflection chain pruned
+    return MultiStepSample(intermediates)                   # 反思链已剪除
 ```
 
-#### 3.1.5 Intuitive Explanation
+#### 3.1.5 直观解释
 
-Think of the pipeline as a *triage system in an ER*: easy cuts (Direct) leave with a band-aid; mid-severity cases get one consult (Reflection); only the genuinely complex multi-trauma cases get the full surgical decomposition (Multi-step). Crucially, the dataset only keeps the *trajectory of treatments that actually cured the patient* — failed reflection attempts are pruned from multi-step trajectories so the student model is taught the cleanest possible decision boundary.
+可以把整条管线看作*急诊室分诊系统*：轻伤（Direct）一贴创可贴就走人；中等伤（Reflection）请一次会诊；只有真正复杂的多重创伤（Multi-step）才送进手术室全套分解。关键是数据集只保留*实际治愈病人的治疗轨迹*——失败的反思尝试在多步轨迹中被剪掉，从而让 student 模型学到尽可能干净的决策边界。
 
-![Figure 2. Three training-data modes with selective loss-masking strategy.](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig2_data_modes.png)
+![图 2. 三种训练数据模式与选择性 loss masking 策略。](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig2_data_modes.png)
 
-### 3.2 Stage B — Supervised Fine-Tuning (SFT) with selective loss masking
+### 3.2 阶段 B——监督微调（SFT），带选择性 loss masking
 
-- **Purpose & placement.** Adapts Emu3.5 to the interleaved generation–evaluation–reflection–planning syntax.
-- **Inputs / outputs.** Conditioning `c = (instruction, reference image)`; the model is autoregressive over a token stream that interleaves text tokens and image patch tokens (Emu3.5 is a next-token-prediction unified model).
-- **Loss.** Standard NLL on a *masked* target subset `O ⊂ output_sequence`:
+- **目的与定位。** 让 Emu3.5 适应交错的“生成—评估—反思—规划”语法。
+- **输入 / 输出。** 条件 `c = (指令, 参考图像)`；模型在交错文本 token 与图像 patch token 的 token 流上自回归（Emu3.5 是 next-token-prediction 风格的统一模型）。
+- **损失。** 在被*掩码*的目标子集 `O ⊂ output_sequence` 上计算标准 NLL：
 
   $$ \mathcal{L}_{\text{SFT}} = -\sum_{t \in \mathcal{O}} \log P(x_t \mid x_{<t}, c) \quad (1) $$
 
-  Each token `xₜ` is either a text token or an image patch token. The mask `O` is **mode-dependent** — this is the central trick.
+  每个 token `xₜ` 要么是文本 token，要么是图像 patch token。掩码 `O` **依模式而异**——这正是核心 trick。
 
-- **Mode-specific masks.** Color-coded in Fig. 2:
+- **模式特定掩码。** 见图 2 中的颜色标注：
 
-  | Mode | `O` | What is masked? |
+  | 模式 | `O` | 额外被掩码的部分 |
   |------|-----|-----------------|
-  | Direct | `{G₁, E₁}` | Nothing extra |
-  | Reflection (`K` iterations, `K`-th succeeds) | `{E_{K-1}, R_{K-1}, G_K, E_K}` | All earlier failed `G₁…G_{K-1}` and their `E₁…E_{K-2}` |
-  | Multi-step (`N+1` planning steps) | `{E₁} ∪ ⋃_{i=2}^{N+1}{Sᵢ, Gᵢ, Eᵢ}` | Nothing — each sub-step's image is on-policy by construction |
+  | Direct | `{G₁, E₁}` | 无 |
+  | Reflection（`K` 次迭代，第 `K` 次成功） | `{E_{K-1}, R_{K-1}, G_K, E_K}` | 所有早期失败的 `G₁…G_{K-1}` 与其 `E₁…E_{K-2}` |
+  | Multi-step（`N+1` 个规划步） | `{E₁} ∪ ⋃_{i=2}^{N+1}{Sᵢ, Gᵢ, Eᵢ}` | 无——按构造每个子步图像都是 on-policy 的 |
 
-- **Why mask.** The discarded image tokens are *failed* generations. Training the model to predict them would (a) waste capacity memorising artifacts, (b) bias the model toward producing similar artifacts at inference. By only fitting the *successful* image and the *correct diagnosis-plus-fix* text, the model learns the corrective procedure *without* internalising the bad outputs.
-- **Hyperparameters (App. A, Table 4).** AdamW (bf16); resolution 512×512; batch size 128; 1 epoch; cosine schedule with warm-up ratio 0.1; LR 1e-5 → 1e-6.
-- **Initialisation.** All models initialised from EUM 3.5 (Emu3.5).
-- **Hardware.** "Internal proprietary distributed infrastructure" — no GPU type, count, or hours disclosed.
-- **Frozen vs trainable.** Not specified — by default Emu3.5 is fully fine-tuned, but the paper is silent on parameter freezing.
+- **为何要 mask。** 被丢弃的图像 token 是*失败*生成。让模型去预测它们会 (a) 浪费容量去记瑕疵，(b) 推理时反而偏向生成类似瑕疵。只对*成功*图像与*正确*的诊断+修复文本拟合，模型学到的是修正流程*本身*而不会内化坏输出。
+- **超参（附录 A，表 4）。** AdamW（bf16）；分辨率 512×512；批大小 128；1 epoch；cosine schedule，warmup ratio 0.1；LR 1e-5 → 1e-6。
+- **初始化。** 所有模型从 Emu3.5 初始化。
+- **硬件。** “内部专有分布式基础设施”——未公开 GPU 类型、数量或时长。
+- **冻结 vs 可训练。** 未指明——默认 Emu3.5 全参数微调，但论文未提及参数冻结。
 
-### 3.3 Stage C — Reinforcement Learning with GRPO
+### 3.3 阶段 C——基于 GRPO 的强化学习
 
-After SFT, the model knows the *form* of the three modes but does not yet decide *when* to use which efficiently. RL closes this loop.
+经过 SFT，模型已掌握三种模式的*形式*，但还没学会*何时*高效使用哪一种。RL 阶段闭合这一回路。
 
-![Figure 3. GRPO RL stage with composite reward and intra-group complexity penalty.](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig3_grpo.png)
+![图 3. GRPO RL 阶段：复合奖励与组内复杂度惩罚。](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig3_grpo.png)
 
-- **Algorithm.** [Group Relative Policy Optimization (GRPO)](https://arxiv.org/abs/2402.03300). Per prompt, the policy `πθ` samples a group `G = {o₁, …, o_M}` of trajectories; advantages are computed as `Aᵢ = (rᵢ − mean(r)) / std(r)`; a KL penalty against a frozen reference model is added.
-- **RL data.** A specialised 50K-sample mix curated from [UniCEdit-10M](https://arxiv.org/abs/2512.02790), [X2Edit](https://arxiv.org/abs/2508.07607), [AnyEdit](https://arxiv.org/abs/2411.15738), [Pick-a-Pic](https://arxiv.org/abs/2305.01569), and [UltraEdit](https://arxiv.org/abs/2407.05282) — covering wide task-complexity range.
-- **Rollout.** Group size = 8 (Table 4).
-- **Hyperparameters.** LR 1e-6; AdamW bf16; cosine schedule; warm-up 0.1; 1 epoch; KL coef 1e-2; sampling temperature 1.
+- **算法。** [Group Relative Policy Optimization (GRPO)](https://arxiv.org/abs/2402.03300)。每个 prompt 下，policy `πθ` 采样一个轨迹组 `G = {o₁, …, o_M}`；优势 `Aᵢ = (rᵢ − mean(r)) / std(r)`；并加上对冻结参考模型的 KL 罚项。
+- **RL 数据。** 一个特别策划的 50K 样本数据集，混合自 [UniCEdit-10M](https://arxiv.org/abs/2512.02790)、[X2Edit](https://arxiv.org/abs/2508.07607)、[AnyEdit](https://arxiv.org/abs/2411.15738)、[Pick-a-Pic](https://arxiv.org/abs/2305.01569) 与 [UltraEdit](https://arxiv.org/abs/2407.05282)——覆盖广泛的任务复杂度。
+- **Rollout。** 组大小 = 8（表 4）。
+- **超参。** LR 1e-6；AdamW bf16；cosine schedule；warmup 0.1；1 epoch；KL 系数 1e-2；采样温度 1。
 
-#### 3.3.1 Reward design
+#### 3.3.1 奖励设计
 
-The composite reward has three "basic" terms and one "extra" structural penalty.
+复合奖励包含三个“基础项”和一个“附加”结构惩罚。
 
-**Outcome Reward `R_o`.** Mirrors the four ANALYZER axes used during data construction — closing the loop between supervision and evaluation:
+**Outcome Reward `R_o`。** 与数据构造时使用的四个 ANALYZER 维度对应——闭合监督与评估的回路：
 
 $$ R_o = w_1 S_{\text{instr}} + w_2 S_{\text{cons}} + w_3 S_{\text{qual}} + w_4 S_{\text{know}} \quad (2) $$
 
-Each `S_*` is the ANALYZER's 1–5 score multiplied by 0.2 to get [0, 1]; the four are simple-averaged, so `w₁ = w₂ = w₃ = w₄ = 0.05`. The paper stresses that these `wᵢ` are **fixed normalisation constants, not tunable hyperparameters**.
+每个 `S_*` 都是 ANALYZER 给出的 1–5 分乘以 0.2 转换到 [0, 1]；四项简单平均，故 `w₁ = w₂ = w₃ = w₄ = 0.05`。论文强调这些 `wᵢ` 是**固定的归一化常数，不是可调超参**。
 
-**Format Reward `R_f`.** A binary structural validity check:
+**Format Reward `R_f`。** 一个二元结构合法性检查：
 
 $$ R_f = \mathbb{1}[\text{trajectory structure is valid}] \quad (3) $$
 
-i.e. did the model emit the required `<Step k>`, `<Evaluate ...>`, `<Failure Analysis>`, `<Improvement Plan>` tags in order? This prevents reward hacking via mode-skipping.
+即模型是否按顺序输出了所需的 `<Step k>`、`<Evaluate ...>`、`<Failure Analysis>`、`<Improvement Plan>` 标签。这避免了通过跳过模式来 hack reward。
 
-**Step-wise Reasoning Reward `R_s`.** A *dense* reward addressing credit-assignment over long-horizon trajectories. For each intermediate textual chunk `text_t` (failure analyses, reflection prompts, sub-step instructions), the ANALYZER returns a logical-validity score in [0, 1]. The trajectory's `R_s` is the average:
+**Step-wise Reasoning Reward `R_s`。** 一个*稠密*奖励，用于解决长程轨迹中的信用分配。对每段中间文本 `text_t`（失败分析、反思 prompt、子步指令），ANALYZER 给出一个 [0, 1] 的逻辑合法性得分。轨迹的 `R_s` 是这些得分的均值：
 
 $$ R_s = \tfrac{1}{T} \sum_{t=1}^{T} \text{ANALYZER}(\text{text}_t) \quad (4) $$
 
-This is the key "process reward" lever — without it (per ablation in Table 2), KRIS-Bench drops from 80.18 to 79.65 and step-wise coherence degrades.
+这是核心的“process reward”杠杆——表 2 的消融显示，去掉它会让 KRIS-Bench 从 80.18 降到 79.65，且步骤一致性退化。
 
-**Total Reward.** Weighted sum:
+**总奖励。** 加权和：
 
 $$ R_{\text{total}} = \alpha_1 R_o + \alpha_2 R_f + \alpha_3 R_s $$
 
-with `(α₁, α₂, α₃) = (0.7, 0.1, 0.2)` (App. A, Table 4).
+`(α₁, α₂, α₃) = (0.7, 0.1, 0.2)`（附录 A，表 4）。
 
-#### 3.3.2 Intra-group Complexity Penalty (the "anti over-reasoning" lever)
+#### 3.3.2 组内复杂度惩罚（“反过度推理”杠杆）
 
-To prevent the model from always defaulting to the deepest reasoning chain (which would maximise format/step-wise reward but waste compute), the authors *modulate* the total reward within each GRPO group:
+为了避免模型总是默认选择最长的推理链（这能最大化 format / step-wise reward 但浪费算力），作者在 GRPO 组内*调制*总奖励：
 
-- Identify the set of **competitive trajectories** within group `G` — those whose `R_total` is within margin `ε` of the best (`ε = 0.05` per Table 4).
-- Let `N*_img` be the *minimum* number of generated images among competitive trajectories.
-- For trajectory `i` with image count `N^i_img`:
+- 在组 `G` 内识别**有竞争力的轨迹**——即 `R_total` 距离最优值不超过 margin `ε` 的轨迹（`ε = 0.05`，见表 4）。
+- 设 `N*_img` 为有竞争力轨迹中**最少**的生成图像数。
+- 对轨迹 `i`（图像数 `N^i_img`）：
 
   $$ R^i_{\text{final}} = \begin{cases} R^i_{\text{total}} + \dfrac{N^*_{\text{img}}}{N^i_{\text{img}}}, & \text{if } R^i_{\text{total}} \geq \max_{j \in G} R^j_{\text{total}} - \epsilon \\ R^i_{\text{total}}, & \text{otherwise} \end{cases} \quad (5) $$
 
-In plain English: "Among trajectories that perform similarly well, the one that used the fewest images gets a small bonus proportional to how much shorter it is." A trajectory that uses 1 image gets `+1.0`; one that used 3 images gets only `+0.33`. This pushes the policy toward **the simplest sufficient mode**.
+通俗地说：“在表现接近的轨迹之间，使用图像数最少的那条会得到一笔与‘短了多少’成比例的小额奖励。” 用 1 张图的轨迹得到 `+1.0`；用 3 张图的只得到 `+0.33`。这把 policy 推向**满足要求的最简单模式**。
 
-- **Effect on Avg. Imgs (Table 2 bottom).** Removing this penalty causes Avg. Imgs to surge from 1.56 to 2.73 (+75%) while gaining only ~0.07 KRIS points — concrete evidence the penalty is a meaningful efficiency lever.
+- **对 Avg. Imgs 的影响（表 2 下半）。** 去掉该惩罚，Avg. Imgs 会从 1.56 飙到 2.73（+75%），却只换来约 0.07 的 KRIS 分提升——这是该惩罚作为效率杠杆的实证。
 
-#### 3.3.3 Intuitive Explanation
+#### 3.3.3 直观解释
 
-The composite reward is teaching the model two things simultaneously: (1) *how* to reason well — every intermediate text gets graded by an LMM, so dense process reward replaces sparse end-task reward; and (2) *whether* to reason at all — competitive trajectories with redundant steps get demoted relative to leaner ones, so the policy converges on "do the cheapest thing that works." The first half is a process-reward model trained against a strong LMM; the second half is a Pareto-style preference for parsimony, implemented entirely inside the group-relative advantage computation rather than as an extra hand-tuned scalar.
+复合奖励同时教会模型两件事：(1) *如何*推理得好——每段中间文本都被 LMM 打分，稠密的过程奖励替代了稀疏的结果奖励；(2) *是否*要推理——表现接近但步骤冗余的轨迹被相对降级，从而让 policy 收敛到“做最简单可行的事”。前半部分是用强 LMM 做 process-reward model；后半部分是 Pareto 风格的简洁性偏好，完全在 group-relative 优势计算中实现，而非额外加一个手工调的标量。
 
-#### 3.3.4 Items not specified in the paper
+#### 3.3.4 论文未具体说明的部分
 
-- Token-/patch-level shapes for image tokens emitted in interleaved streams.
-- Whether classifier-free guidance is used at inference.
-- KL reference model identity (likely the post-SFT checkpoint, but not stated).
-- Hardware spec (GPU model, count, total GPU-hours/days for either stage).
-- Whether the reward model (ANALYZER) is queried online during RL or whether scores are cached.
+- 交错流中图像 token 的 token / patch 级形状。
+- 推理时是否使用 classifier-free guidance。
+- KL 参考模型的具体身份（很可能是 SFT 后的 checkpoint，但论文未明说）。
+- 硬件规格（GPU 型号、数量、SFT/RL 各自的总 GPU-hours / days）。
+- 奖励模型（ANALYZER）在 RL 中是在线查询还是分数缓存。
 
 ---
 
-## 4. Data Construction
+## 4. 数据构造
 
-### 4.1 Data Sources
+### 4.1 数据来源
 
-The 50K SFT dataset is *synthesised* via the hierarchical pipeline described in §3.1, seeded by raw inputs from the X2I task family ([GlueGen, Qin et al. 2023](https://arxiv.org/abs/2303.10056) lineage). The 50K *RL* set is curated from five public corpora — see §3.3 above.
+50K SFT 数据集是经 §3.1 描述的层次化管线*合成*而来，原始输入种子来自 X2I 任务族（[GlueGen, Qin et al. 2023](https://arxiv.org/abs/2303.10056) 的体系）。50K 的 *RL* 数据集则是从五个公开语料中策划的——见上文 §3.3。
 
-### 4.2 Pipeline Step-by-Step
+### 4.2 管线分步骤
 
-Already detailed in §3.1.1–§3.1.4. The yield numbers (how many raw inputs entered, how many were filtered at each stage) are **not disclosed**. The paper reports only the post-pipeline split:
+已在 §3.1.1–§3.1.4 中详细说明。每一阶段进出多少原始输入、被过滤多少的产出数字**未公开**。论文只给出了管线之后的 split：
 
-- **Direct Mode:** 10,000 samples
-- **Reflection Mode:** 20,000 samples
-- **Multi-step Mode:** 20,000 samples
-- **Total:** 50,000 samples
+- **Direct Mode：** 10,000 样本
+- **Reflection Mode：** 20,000 样本
+- **Multi-step Mode：** 20,000 样本
+- **总计：** 50,000 样本
 
-### 4.3 Annotation Methodology
+### 4.3 标注方法
 
-- **Synthetic supervision.** ANALYZER (Qwen3-VL-235B) and GENERATOR (Gemini-3-Pro-Image) — verbatim score and reflection prompts in App. E (Figs. 11–14 of the paper).
-- **Human verification.** Two annotators per sample, unanimous-accept rule. **Unspecified:** annotator pool size, qualifications, training, payment, location, time budget, IAA metric / value.
+- **合成监督。** ANALYZER（Qwen3-VL-235B）与 GENERATOR（Gemini-3-Pro-Image）——评分与反思 prompt 在附录 E（论文图 11–14）逐字给出。
+- **人工校验。** 每条样本两名标注员，全员通过才接受。**未公开：** 标注员池规模、资质、培训、报酬、地区、时间预算、IAA 指标 / 数值。
 
-### 4.4 Synthetic / Model-Generated Data — Prompt Templates (verbatim from App. E)
+### 4.4 合成 / 模型生成数据——Prompt 模板（取自附录 E 原文）
 
-The paper releases the four ANALYZER score prompts and the two pipeline prompts. Salient features:
+论文公开了四个 ANALYZER 评分 prompt 与两个管线 prompt。要点：
 
-- **Instruction Score Prompt.** Three-step reasoning chain — *Detect Change → Expected Visual Caption → Instruction Match* — then a 1–5 score with rubric tiers (Perfect / Minor Omission / Partial / Major Omission / Non-compliance).
-- **Consistency Score Prompt.** Branches by input type (Pure-Text / Single-Image / Multi-Image-subject-driven). For multi-image subject-driven X2I, the rubric explicitly tolerates pose/environment changes but not identity drift.
-- **Quality Score Prompt.** Four criteria — *Structural Coherence, Lighting & Color Harmony, Technical Fidelity, Compositional Logic*. Explicitly flags "sticker effect" and DoF mismatches as failure modes.
-- **Knowledge Score Prompt.** Adopts a "Strict Visual Forensics Expert" persona with a 3-phase protocol — *Geometry+Scale+Depth → Shadow+Grounding → Semantic Consistency*. Bias of the prompt: heavy focus on physical plausibility, which is what gives KRIS-Bench's "Procedural" sub-score the +14.4 bump (Table 1).
-- **Reflection Prompt.** Forces JSON `{failure_analysis, improvement_plan}`; explicitly enumerates failure taxonomies.
-- **Multi-step Generation Prompt.** Encodes the *Local-before-Global* heuristic, a 2–5-step budget, the "Move = remove + add" decomposition rule, and a **Subject Reference Update** rule (later steps must rename "cat" to "tiger" if step 1 changed the cat into a tiger).
+- **Instruction Score Prompt。** 三步推理链——*Detect Change → Expected Visual Caption → Instruction Match*——再给出 1–5 分（Perfect / Minor Omission / Partial / Major Omission / Non-compliance 五档）。
+- **Consistency Score Prompt。** 按输入类型分支（Pure-Text / Single-Image / Multi-Image-subject-driven）。对于多图 subject-driven X2I，rubric 显式允许 pose / 环境变化但不允许身份漂移。
+- **Quality Score Prompt。** 四个维度——*Structural Coherence、Lighting & Color Harmony、Technical Fidelity、Compositional Logic*。显式把“贴纸效应”和 DoF 不一致列为失败模式。
+- **Knowledge Score Prompt。** 采用“Strict Visual Forensics Expert”人设，三阶段协议——*Geometry+Scale+Depth → Shadow+Grounding → Semantic Consistency*。该 prompt 的偏向：高度强调物理合理性，这正是 KRIS-Bench “Procedural” 子项 +14.4 的提升来源（表 1）。
+- **Reflection Prompt。** 强制输出 JSON `{failure_analysis, improvement_plan}`；显式枚举失败分类。
+- **Multi-step Generation Prompt。** 编码了*Local-before-Global*启发式、2–5 步预算、“移动 = 移除 + 添加”分解规则，以及 **Subject Reference Update** 规则（如果第 1 步把 cat 变成 tiger，后续步骤必须把“cat”改称“tiger”）。
 
-### 4.5 Final Statistics
+### 4.5 最终统计
 
-| Dimension | Sub-categories (21 total) |
+| 维度 | 子类（共 21 个） |
 |-----------|---------------------------|
 | Object Manipulation | Subject Addition, Removal, Replacement, Part Completion |
 | Attribute Modification | Color, Material, Size, Count, Anomaly Correction |
@@ -282,51 +282,51 @@ The paper releases the four ANALYZER score prompts and the two pipeline prompts.
 | Dynamics & Logic | Motion Change, Temporal Evolution, Text Modification |
 | Multi-Image Operations | Composition, Object Replacement, Reference Transfer |
 
-| Mode | Samples |
+| 模式 | 样本数 |
 |------|---------|
 | Direct | 10,000 |
 | Reflection | 20,000 |
 | Multi-step | 20,000 |
-| **Total SFT** | **50,000** |
-| RL data | 50,000 (separate, curated from 5 public sources) |
+| **SFT 总计** | **50,000** |
+| RL 数据 | 50,000（独立，从 5 个公开来源策划） |
 
-Per-sub-category counts, length distributions, and image-resolution distributions are **not disclosed**.
+各子类样本数、长度分布、图像分辨率分布**未公开**。
 
-### 4.6 Benchmark Protocol
+### 4.6 Benchmark 协议
 
-The paper does *not* introduce a new benchmark — it evaluates on three existing ones (GenEval / KRIS-Bench / OmniContext). For RL-stage outcome reward computation, the four-axis scoring is applied at training time using ANALYZER (Qwen3-VL-235B) — i.e. *the same model family judges training and validation*, raising a mild "judge-bias" concern (see §7).
+论文*未*提出新 benchmark——评测沿用 GenEval / KRIS-Bench / OmniContext 三个已有 benchmark。RL 阶段的 outcome reward 计算依赖 ANALYZER（Qwen3-VL-235B）在训练时给出的四维评分——即*同一模型族同时充当训练评分器与验证评分器*，引入轻度的“judge-bias”担忧（详见 §7）。
 
-### 4.7 Known Biases / Limitations
+### 4.7 已知偏置 / 局限
 
-The authors do not enumerate dataset biases. From the rubric phrasing alone, two reviewer concerns:
+作者未列出数据集偏置。仅从 rubric 措辞推断，有两点 reviewer 关注：
 
-- **Knowledge prompt's persona** ("Strict Visual Forensics Expert") biases toward conservative outputs — hyper-realistic placements may be preferred even when an artistic / surreal output is requested.
-- **English-only.** The prompts and example instructions are English; cross-lingual coverage is not discussed.
+- **Knowledge prompt 的人设**（“Strict Visual Forensics Expert”）会偏向保守输出——超写实摆放可能被偏好，即使用户本意要的是艺术化 / 超现实结果。
+- **仅英文。** Prompt 与示例指令都是英文；跨语言覆盖未讨论。
 
 ---
 
-## 5. Experiments & Evaluation
+## 5. 实验与评估
 
-### 5.1 Setup
+### 5.1 设置
 
-- **Backbone.** [Emu3.5](https://arxiv.org/abs/2510.26583) — used both as the trained policy and as the *Direct* baseline.
-- **Baselines under controlled comparison.** Vanilla Emu3.5 (Direct), Plan-then-Generate (static planner before exec), Generate-then-Reflect (iterative critique). External baselines listed per benchmark below.
-- **Benchmarks.** [GenEval](https://arxiv.org/abs/2310.11513) for T2I; [KRIS-Bench](https://arxiv.org/abs/2505.16707) for advanced reasoning-based image editing; [OmniContext](https://arxiv.org/abs/2506.18871) for X2I subject-driven & multi-reference generation.
-- **Resolution at eval.** 512×512 (per Table 4).
+- **主干。** [Emu3.5](https://arxiv.org/abs/2510.26583)——既作为被训练的 policy，也作为 *Direct* 基线。
+- **受控对比的基线。** 原版 Emu3.5（Direct）、Plan-then-Generate（执行前的静态 planner）、Generate-then-Reflect（迭代式 critique）。各 benchmark 下的外部基线见下。
+- **Benchmark。** [GenEval](https://arxiv.org/abs/2310.11513) 用于 T2I；[KRIS-Bench](https://arxiv.org/abs/2505.16707) 针对推理强度高的图像编辑；[OmniContext](https://arxiv.org/abs/2506.18871) 针对 X2I subject-driven 与多参考生成。
+- **评测分辨率。** 512×512（见表 4）。
 
-### 5.2 Main Results
+### 5.2 主结果
 
-#### 5.2.1 KRIS-Bench (Image Editing — reasoning-heavy)
+#### 5.2.1 KRIS-Bench（图像编辑——重推理）
 
-KRIS-Bench breaks editing into three knowledge regimes — *Factual*, *Conceptual*, *Procedural*.
+KRIS-Bench 把图像编辑分为三个知识维度——*Factual*、*Conceptual*、*Procedural*。
 
-| Model | Factual | Conceptual | Procedural | Overall |
+| 模型 | Factual | Conceptual | Procedural | Overall |
 |-------|---------|------------|------------|---------|
-| **Closed-source** | | | | |
+| **闭源** | | | | |
 | Gemini 2.5 Flash | 77.03 | 78.29 | 75.93 | 77.29 |
 | Doubao | 78.10 | 76.86 | 76.93 | 77.31 |
 | GPT-4o | 79.80 | 81.37 | 78.32 | 80.09 |
-| **Open-source** | | | | |
+| **开源** | | | | |
 | OmniGen2 ([Wu et al. 2025c](https://arxiv.org/abs/2506.18871)) | 57.36 | 44.20 | 47.79 | 49.71 |
 | BAGEL-thinking ([Deng et al. 2025a](https://arxiv.org/abs/2505.14683)) | 66.18 | 61.92 | 49.02 | 60.18 |
 | BAGEL ([Deng et al. 2025b](https://arxiv.org/abs/2505.14683)) | 60.26 | 55.86 | 51.69 | 56.21 |
@@ -338,13 +338,13 @@ KRIS-Bench breaks editing into three knowledge regimes — *Factual*, *Conceptua
 | Qwen-Image-Edit-2509 ([Wu et al. 2025b](https://arxiv.org/abs/2508.02324)) | 61.47 | 56.79 | 47.07 | 56.15 |
 | ReasonEdit-Q (think+reflect) ([Yin et al. 2025](https://arxiv.org/abs/2511.22625)) | 63.92 | 64.85 | 52.41 | 61.57 |
 | Emu3.5 ([Cui et al. 2025](https://arxiv.org/abs/2510.26583)) | 78.59 | 71.92 | 71.14 | 73.75 |
-| **Ours (SAIR)** | **84.24** | **74.83** | **85.53** | **80.18** |
+| **本文 (SAIR)** | **84.24** | **74.83** | **85.53** | **80.18** |
 
-**Commentary.** The headline jump is on **Procedural** knowledge: 85.53 vs. 71.14 for Emu3.5 (+14.39 abs / +20% rel) and even +7.21 above GPT-4o. KRIS-Procedural tests multi-step "do X then Y" reasoning — exactly what Multi-step Mode is engineered for. Factual gains (+5.65 over Emu3.5) reflect Reflection Mode's ability to inject knowledge-axis corrections (e.g. the photosynthesis example, Fig. 6). Conceptual gains (+2.91) are the smallest — Conceptual leans on world knowledge encoded in the *backbone*, which SAIR doesn't change.
+**评论。** 头号亮点是 **Procedural** 维度：85.53 vs. Emu3.5 的 71.14（+14.39 绝对 / +20% 相对），甚至比 GPT-4o 高 +7.21。KRIS-Procedural 测试的是多步“先 X 后 Y”的推理——这正是 Multi-step Mode 的目标场景。Factual 提升（比 Emu3.5 +5.65）反映 Reflection Mode 注入 knowledge 维度修正的能力（如图 6 的光合作用案例）。Conceptual 提升（+2.91）最小——Conceptual 依赖编码在*主干*的世界知识，而 SAIR 不改主干。
 
-#### 5.2.2 OmniContext (X2I subject-driven & multi-reference)
+#### 5.2.2 OmniContext（X2I subject-driven 与多参考）
 
-| Model | Single·Char | Single·Obj | Mult·Char | Mult·Obj | Mult·C+O | Scene·Char | Scene·Obj | Scene·C+O | **Avg.** |
+| 模型 | Single·Char | Single·Obj | Mult·Char | Mult·Obj | Mult·C+O | Scene·Char | Scene·Obj | Scene·C+O | **Avg.** |
 |-------|-----|-----|-----|-----|-----|-----|-----|-----|-----|
 | OmniGen ([Xiao et al. 2025](https://arxiv.org/abs/2409.11340)) | 7.21 | 5.71 | 5.65 | 5.44 | 4.68 | 3.59 | 4.32 | 5.12 | 4.34 |
 | UNO ([Wu et al. 2025d](https://arxiv.org/abs/2504.02160)) | 6.60 | 6.83 | 2.54 | 6.51 | 4.39 | 2.06 | 4.33 | 4.37 | 4.71 |
@@ -357,13 +357,13 @@ KRIS-Bench breaks editing into three knowledge regimes — *Factual*, *Conceptua
 | VACoT | – | – | 7.82 | 9.21 | 8.30 | 7.55 | 8.67 | 7.99 | 8.26 |
 | GPT-4o (Sep'25) | 8.90 | 9.01 | 9.07 | 8.95 | 8.54 | 8.90 | 8.44 | 8.60 | 8.80 |
 | Emu3.5 | 8.72 | 9.46 | 8.65 | 9.09 | 8.78 | 8.78 | 8.89 | 8.15 | 8.82 |
-| **Ours** | **9.40** | **9.50** | **9.56** | **9.22** | **9.44** | **9.56** | **9.22** | **8.86** | **9.35** |
+| **本文** | **9.40** | **9.50** | **9.56** | **9.22** | **9.44** | **9.56** | **9.22** | **8.86** | **9.35** |
 
-**Commentary.** SAIR is best across **every** sub-category. The largest deltas vs. Emu3.5 are **Mult·Char** (+0.91), **Mult·C+O** (+0.66), and **Scene·Char** (+0.78) — all multi-reference settings where attention entanglement is the documented failure mode and Multi-step decomposition is the engineered fix.
+**评论。** SAIR 在**每一个**子类上都最优。相对 Emu3.5 提升最大的是 **Mult·Char**（+0.91）、**Mult·C+O**（+0.66）与 **Scene·Char**（+0.78）——全是多参考场景，正是被 paper 标记为注意力纠缠的失败场景，也正是 Multi-step 分解被设计来解决的目标。
 
-#### 5.2.3 GenEval (T2I)
+#### 5.2.3 GenEval（T2I）
 
-| Model | Single Obj | Two Obj | Counting | Colors | Position | Color Attri. | **Overall** |
+| 模型 | Single Obj | Two Obj | Counting | Colors | Position | Color Attri. | **Overall** |
 |-------|-----|-----|-----|-----|-----|-----|-----|
 | Emu3-Gen | 0.98 | 0.71 | 0.34 | 0.81 | 0.17 | 0.21 | 0.54 |
 | SDXL | 0.98 | 0.74 | 0.39 | 0.85 | 0.15 | 0.23 | 0.55 |
@@ -379,153 +379,153 @@ KRIS-Bench breaks editing into three knowledge regimes — *Factual*, *Conceptua
 | Uni-CoT | 0.99 | 0.95 | 0.82 | 0.89 | 0.60 | 0.72 | 0.83 |
 | VACoT | 0.99 | 0.95 | 0.80 | 0.90 | 0.66 | 0.71 | 0.84 |
 | Emu3.5 | – | – | – | – | – | – | 0.86 |
-| **Ours** | 0.98 | 0.94 | **0.90** | **0.93** | **0.79** | **0.81** | **0.89** |
+| **本文** | 0.98 | 0.94 | **0.90** | **0.93** | **0.79** | **0.81** | **0.89** |
 
-**Commentary.** The reasoning-heavy GenEval categories — **Counting (+0.10 over VACoT)**, **Position (+0.13)**, **Color Attribution (+0.10)** — are exactly the sub-tasks where compositional planning helps, and SAIR posts the largest gains. Note SAIR loses ~0.01 on the trivial "Single Obj" (0.98 vs. 0.99) — overhead of triggering interleaved reasoning on simple prompts that the complexity penalty *should* prevent. This residual gap is worth flagging — see §7.
+**评论。** GenEval 中重推理的子类——**Counting（比 VACoT +0.10）**、**Position（+0.13）**、**Color Attribution（+0.10）**——正是组合性规划能起作用的子任务，SAIR 在这些上提升最大。注意 SAIR 在最简单的 “Single Obj” 上反而损失约 0.01（0.98 vs. 0.99）——这是在简单 prompt 上触发交错推理的额外开销，本应被复杂度惩罚抑制。这一残余差距值得记录——见 §7。
 
-### 5.3 Ablation Studies (Table 2)
+### 5.3 消融研究（表 2）
 
-| Setting | GenEval | KRIS | Omni | Avg. Imgs |
+| 设置 | GenEval | KRIS | Omni | Avg. Imgs |
 |---------|---------|------|------|-----------|
-| **Top: Reasoning Modes (30k subset)** | | | | |
+| **上：推理模式（30k 子集）** | | | | |
 | Direct Only | 0.86 | 75.16 | 8.89 | – |
 | w/o Multi-step | 0.87 | 77.24 | 8.95 | – |
 | w/o Reflection | 0.86 | 75.21 | 9.03 | – |
-| Full Mix (Balanced) | **0.88** | **78.24** | **9.15** | – |
-| **Bottom: RL Components (50k full)** | | | | |
+| Full Mix（均衡） | **0.88** | **78.24** | **9.15** | – |
+| **下：RL 组件（50k 全集）** | | | | |
 | SFT Only | 0.86 | 79.16 | 9.12 | 2.45 |
 | w/o Step-wise Reward | 0.88 | 79.65 | 9.25 | 1.62 |
 | w/o Complexity Penalty | 0.89 | 80.25 | 9.38 | 2.73 |
-| **SFT + RL (Ours)** | **0.89** | 80.18 | 9.35 | **1.56** |
+| **SFT + RL（本文）** | **0.89** | 80.18 | 9.35 | **1.56** |
 
-**Mode-mix ablation.**
+**模式混合消融。**
 
-- *Direct Only*: KRIS 75.16 — the lower bound; data scale alone without structured reasoning is insufficient.
-- *w/o Reflection*: KRIS drops to 75.21 (-3.03 vs. Full Mix). Reflection Mode is essential for KRIS-style fine-grained refinement.
-- *w/o Multi-step*: OmniContext drops to 8.95 (-0.20). Multi-step Mode is essential for multi-subject X2I.
-- *Full Mix*: Best on every benchmark — modes are **complementary, not redundant**.
+- *Direct Only*：KRIS 75.16——下界；仅靠数据规模而无结构化推理是不够的。
+- *w/o Reflection*：KRIS 跌到 75.21（相对 Full Mix -3.03）。Reflection Mode 对 KRIS 的细粒度修正不可或缺。
+- *w/o Multi-step*：OmniContext 跌到 8.95（-0.20）。Multi-step Mode 对多主体 X2I 不可或缺。
+- *Full Mix*：在每个 benchmark 上均最优——三种模式**互补，不冗余**。
 
-**RL-component ablation.**
+**RL 组件消融。**
 
-- *SFT Only* → *SFT + RL*: KRIS 79.16 → 80.18 (+1.02), OmniContext 9.12 → 9.35 (+0.23), and crucially Avg. Imgs 2.45 → 1.56. RL is doing real work even when SFT data is identical.
-- *w/o Step-wise Reasoning Reward*: KRIS drops to 79.65 (-0.53), Avg. Imgs *increases* slightly to 1.62 — without dense process supervision the model becomes lazier in reasoning quality but not necessarily longer.
-- *w/o Complexity Penalty*: All three benchmarks marginally improve (KRIS 80.25, +0.07 vs Ours) — but Avg. Imgs shoots up to 2.73 (+75%). This is the **clearest win/loss tradeoff in the paper**: tiny accuracy gain at huge inference-cost penalty. The full system trades 0.07 KRIS points for ~43% fewer images.
+- *SFT Only* → *SFT + RL*：KRIS 79.16 → 80.18（+1.02），OmniContext 9.12 → 9.35（+0.23），关键的是 Avg. Imgs 2.45 → 1.56。即使在相同 SFT 数据下，RL 仍在做实事。
+- *w/o Step-wise Reasoning Reward*：KRIS 跌至 79.65（-0.53），Avg. Imgs *略升*到 1.62——失去稠密过程监督后，模型在推理质量上更懒，但不一定更长。
+- *w/o Complexity Penalty*：三个 benchmark 均略涨（KRIS 80.25，相对本文 +0.07）——但 Avg. Imgs 暴涨到 2.73（+75%）。这是论文中**最干净的取舍**：极小的精度提升换来巨大的推理代价惩罚。完整系统用 0.07 KRIS 分换得了约 43% 更少的图像。
 
-### 5.4 Scaling / Capacity Studies
+### 5.4 Scaling / 容量研究
 
-The paper does not vary backbone size, training-data scale, or image resolution. Only one backbone (Emu3.5) and one training-set size (50K SFT + 50K RL) are reported.
+论文未变化主干规模、训练数据规模或图像分辨率。仅汇报了一个主干（Emu3.5）和一个训练规模（50K SFT + 50K RL）。
 
-### 5.5 Qualitative Results
+### 5.5 定性结果
 
-![Figure 4. Adaptive reasoning case study (main paper).](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig4_casestudy.png)
+![图 4. 自适应推理案例（主文）。](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig4_casestudy.png)
 
-- **Top — Reflection (logic puzzle).** Prompt: "fill in the next number in (5, 7, 11, 13, 17, ?)." Direct generation outputs "1?" (visually plausible, logically wrong). Reflection's failure analysis tags this as a *reasoning error, not a visual error* — and the improvement plan instructs the generator to render "19" (the next prime). The takeaway: structured reflection successfully separates *semantic* errors from *pixel* errors and corrects them at the right layer.
-- **Bottom — Multi-step (compositional scene).** Prompt: keys + toy figure + broken blinds + clock + homework on a desk, with morphological constraints. Direct generation hallucinates a second clock and morphs keys into coins. The step-wise evaluator flags both, then decomposes into 3 atomic steps (place toy+keys → add hands+homework+clock → add blinds with light pattern). Each step's evaluator confirms √ on all four axes.
+- **上方——Reflection（逻辑题）。** Prompt：“在 (5, 7, 11, 13, 17, ?) 后填下一个数字”。直接生成输出 “1?”（视觉上看似合理，逻辑上错）。Reflection 的 failure analysis 把它标为*推理错误，而非视觉错误*——improvement plan 指示生成器渲染 “19”（下一个素数）。要点：结构化反思成功地把*语义*错误与*像素*错误区分开来，并在正确的层面修正。
+- **下方——Multi-step（合成场景）。** Prompt：钥匙 + 玩偶 + 破百叶窗 + 时钟 + 桌上的家庭作业，并附带形态约束。直接生成幻觉出第二个钟，并把钥匙变成硬币。step-wise evaluator 标出两处错误，再分解为 3 个原子步（先放玩偶+钥匙 → 加上手部+作业+钟 → 加百叶窗与光影）。每一步的 evaluator 都在四个维度全部打勾。
 
-![Figure 5. Quantitative correction — "remove two computers".](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig5_remove_monitors.png)
+![图 5. 定量修正——“去掉两台显示器”。](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig5_remove_monitors.png)
 
-The base Emu3.5 leaves the scene unchanged; SAIR's first attempt over-removes (deletes all five monitors); Reflection mode diagnoses *misinterpretation of instruction scope* and re-prompts with a spatially explicit instruction ("remove only the leftmost and rightmost monitors") — the second pass succeeds.
+基线 Emu3.5 完全没改场景；SAIR 第一次生成过度删除（删了五台显示器）；Reflection 模式诊断为*指令范围理解错误*，并把 prompt 改成空间显式的版本（“仅去除最左和最右的显示器”）——第二次成功。
 
-![Figure 6. Scientific-knowledge correction — algae photosynthesis.](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig6_photosynthesis.png)
+![图 6. 科学知识修正——藻类光合作用。](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig6_photosynthesis.png)
 
-Base model defaults to "glowing blue sparkles" (a pretty but physically wrong metaphor). Reflection invokes the Knowledge axis to explicitly demand transparent rising bubbles obeying buoyancy and refraction. The corrected image swaps sparkles for bubbles. This case demonstrates the Knowledge prompt's "physical-laws-first" rubric is doing actual work.
+基线模型默认输出“蓝色发光的星点”（一个漂亮但物理错误的隐喻）。Reflection 调用 Knowledge 维度，显式要求“透明上升气泡，遵循浮力与折射”。修正后的图把星点换成了气泡。该例证明 Knowledge prompt 的“物理定律优先”rubric 真起到了作用。
 
-![Figure 7. Multi-reference wedding composition (Part 1).](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig7_wedding_p1.png)
+![图 7. 多参考婚礼合成（第 1 部分）。](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig7_wedding_p1.png)
 
-Prompt requires three reference identities + wedding context. Direct generation outputs *four* people (counting hallucination from attention entanglement). Multi-step decomposes into three atomic steps: (1) extract & composite three identities side-by-side; (2) replace clothing with bride / bridesmaid / tuxedo; (3) replace background with floral wedding wall. Each step's evaluator clears all four axes.
+Prompt 要求 3 个参考身份 + 婚礼背景。直接生成输出*四个*人（注意力纠缠下的计数幻觉）。Multi-step 把任务拆成三个原子步：(1) 提取并并列三人身份；(2) 把服装替换为新娘 / 伴娘 / 礼服；(3) 把背景替换为花卉婚礼墙。每一步的 evaluator 全部 4 个维度通过。
 
-![Figure 9. Spatial-layout correction — "bear several feet from table".](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig9_bear_p1.png)
+![图 9. 空间布局修正——“熊距离桌子若干英尺”。](https://raw.githubusercontent.com/bugWholesaler/paper_reading/main/figures/sair_fig9_bear_p1.png)
 
-Base models cluster the bear immediately adjacent to the table. Multi-step decomposes into *establish ground plane (table) first → place bear conditioned on the existing geometry*, which converts the textual constraint "several feet away" into a geometric one ("behind the table in depth"). This case is illustrative of *why* local-before-global ordering in the planner prompt (App. E, Fig. 14) matters.
+基线模型把熊紧挨桌子。Multi-step 拆解为*先建立地面（桌子）平面 → 在已有几何条件下放置熊*，把文字约束“离桌几英尺远”转化为几何约束（“在桌子后方有深度”）。这是 planner prompt（附录 E，图 14）中“先局部后全局”顺序为何重要的范例。
 
-### 5.6 Failure Cases
+### 5.6 失败案例
 
-Acknowledged in the paper:
+论文承认的：
 
-- **Specialized-knowledge cases are filtered out** of the multi-step phase rather than solved (§3.3 of paper). The system therefore inherits its backbone's domain coverage.
-- The *w/o Complexity Penalty* ablation reveals that without the penalty the model resorts to "excessive trial-and-error" — a tell-tale failure mode of unconstrained reflection-style training.
+- **专业知识案例在 multi-step 阶段被过滤掉**（论文 §3.3）而不是被解决。系统因此继承主干的领域覆盖范围。
+- *w/o Complexity Penalty* 消融揭示：没有惩罚时模型会陷入“过度试错”——这是无约束反思训练的典型失败模式。
 
-Implied (reviewer-flagged) failure modes:
+我作为 reviewer 推断的失败模式：
 
-- Single-Obj GenEval drops 0.01 vs. baselines — small but consistent overhead from the interleaved-reasoning prelude.
-- The pipeline depends on a fixed 3-iteration cap for reflection; harder samples are simply discarded as "not solvable by reflection" without recourse.
+- Single-Obj GenEval 比基线掉 0.01——很小但稳定的“交错推理前奏”开销。
+- 管线把反思固定为 3 次上限；更难的样本会被直接当作“反思无法解”丢弃，没有兜底。
 
-### 5.7 Cost & Efficiency
+### 5.7 成本与效率
 
-- **Avg. images per query** is the paper's chosen efficiency metric. The full method achieves **1.56**, vs. 2.45 for SFT-only — a 36% reduction.
-- No latency, FLOP, memory, or wall-clock numbers are reported.
-- Hardware: "internal proprietary distributed infrastructure" (App. A) — not specified.
+- **每 query 平均图像数**是论文选择的效率指标。完整方法达到 **1.56**，对比 SFT-only 的 2.45——下降 36%。
+- 没有报告 latency、FLOP、显存或 wall-clock 数字。
+- 硬件：“内部专有分布式基础设施”（附录 A）——未公开。
 
-### 5.8 Human Evaluation
+### 5.8 人工评测
 
-None reported in the main body or appendix. All quality numbers come from automated benchmark scripts (GenEval/KRIS/OmniContext) which themselves use LMM-as-judge protocols.
+正文与附录都没有。所有质量数字都来自自动化 benchmark 脚本（GenEval/KRIS/OmniContext），它们本身就在用 LMM-as-judge 协议。
 
-### 5.9 Statistical Reliability
+### 5.9 统计可靠性
 
-No std-devs, confidence intervals, seed counts, or significance tests are reported anywhere. All numbers are single-run point estimates.
-
----
-
-## 6. Strengths
-
-1. **Adaptive routing is a genuine novelty.** Prior reasoning-in-generation work pre-commits to either Plan-then-Generate or Generate-then-Reflect; SAIR is the first to learn *when to use which* (and *whether to skip both*) inside a single unified model. The ablation on Avg. Imgs (Table 2 bottom: 1.56 vs 2.73 with vs. without complexity penalty) is the cleanest evidence that this routing is non-trivial.
-2. **The intra-group complexity penalty is a clean efficiency lever.** Encoded entirely inside GRPO's group-relative advantage rather than as another `α₄` knob, it contributes to a 36% reduction in inference cost with no loss of quality (and in fact a slight quality *gain* on KRIS / OmniContext). This is a transferable design pattern for future RL-tuned multi-modal CoT systems.
-3. **State-of-the-art on three benchmarks simultaneously.** GenEval 0.89, KRIS-Bench 80.18, OmniContext 9.35 — beating Emu3.5 backbone on all three and the proprietary GPT-4o on two of three. The +14.39 absolute gain on KRIS Procedural (85.53 vs. 71.14) is especially convincing because Procedural is the regime where the Multi-step Mode is theoretically motivated.
-4. **Selective loss masking is surgical.** SFT loss is computed only on (a) successful images, (b) the diagnosis-and-fix text — never on failed image tokens. This keeps the model from internalising the artifacts that the Reflection mode is supposed to *correct*. The Reflection ablation (KRIS 75.21 → 78.24 with Reflection added) suggests the masking is non-trivial supervision in practice.
-5. **Verbatim prompt disclosure (App. E).** All four ANALYZER score prompts, the Reflection prompt, and the Multi-step Decomposition prompt are reproduced word-for-word in Figs. 11–14 — making the LMM-as-judge component of both training and evaluation reproducible.
+任何地方都没有标准差、置信区间、seed 数量或显著性检验。所有数字都是单次运行的点估计。
 
 ---
 
-## 7. Weaknesses & Limitations
+## 6. 优势
 
-1. **Closed-loop judge bias.** The same LMM family (Qwen3-VL-235B) generates the SFT supervision (via ANALYZER), drives the RL outcome reward (Eq. 2) and step-wise reward (Eq. 4), and is *also* the dominant judge in benchmarks like KRIS-Bench. This creates a strong "judge × policy" coupling — the policy may be optimising what *Qwen3-VL likes to score highly*, not what humans rate as better. A held-out human evaluation (entirely missing from the paper) would close this gap.
-2. **No human evaluation, no statistical significance.** All numbers are single-seed point estimates with no confidence intervals; differences as small as +0.07 KRIS points (the cost the complexity penalty pays) are within plausible noise. The recipe is high-effort and high-cost; the empirical case for choosing the full system over `w/o Complexity Penalty` rests entirely on Avg. Imgs.
-3. **Yield numbers and dataset filter rates are missing.** §3 says "specialised-knowledge cases are filtered out" but does not say *what fraction* of failed reflections become Multi-step samples vs. discarded — this matters because it controls the data-mode balance. The 10K / 20K / 20K split is asserted, not derived from a transparent yield calculation.
-4. **Generator supervision quality bottlenecked by Gemini-3-Pro-Image.** The successful trajectories in the dataset are ground-truthed by Gemini's outputs. Any systematic bias of Gemini (stylistic preferences, watermarking, identity-preservation tendencies) will be inherited by SAIR. The paper does not analyse this dependency.
-5. **Annotator details unspecified.** "Two annotators per sample" is stated, but pool size, qualifications, payment, and inter-annotator agreement are missing. Without IAA the strict "unanimous accept" rule could be either over-conservative (rejecting good samples) or under-discriminating (waving through borderline cases), and the reader cannot tell which.
-6. **Hardware and reproducibility cost are opaque.** "Internal proprietary distributed infrastructure" is a no-op for outside reproduction. No GPU type, count, hours, or memory footprint is reported for either SFT or RL. Estimating retraining cost is impossible from the paper alone.
-7. **Single backbone, single resolution.** All experiments are at 512×512 on Emu3.5. Whether SAIR's gains transfer to Janus-Pro / BAGEL / OmniGen2 is unknown; whether they hold at 1024×1024 is unknown. No scaling curves are provided.
-8. **Generator–verifier asymmetry is unaddressed.** The composition of (Qwen3-VL ANALYZER + Gemini-3-Pro GENERATOR) for data generation is *more capable* than the (Emu3.5-trained) student. This is fine for distillation, but it means SAIR's ceiling is tied to Gemini's capability — the student cannot exceed the teacher's coverage. No RLAIF-style on-policy data refresh is implemented.
+1. **自适应路由是真正的新颖性。** 既有的“生成中推理”工作要么预设 Plan-then-Generate，要么预设 Generate-then-Reflect；SAIR 是首个在单个统一模型中*学会何时用哪一种*（甚至*跳过两者*）的方法。表 2 下半的 Avg. Imgs 消融（带 vs 不带复杂度惩罚 1.56 vs 2.73）是该路由非平凡的最干净证据。
+2. **组内复杂度惩罚是一个干净的效率杠杆。** 完全编码在 GRPO 的组相对优势内，而不是再加一个 `α₄` 旋钮——它带来 36% 的推理成本削减且没有质量损失（KRIS / OmniContext 还略微提升）。这是一个面向未来 RL 调优多模态 CoT 系统的可迁移设计模式。
+3. **同时在三个 benchmark 上达到 SOTA。** GenEval 0.89、KRIS-Bench 80.18、OmniContext 9.35——三项都超 Emu3.5 主干，三项中两项超闭源 GPT-4o。KRIS Procedural 上 +14.39 的绝对提升（85.53 vs 71.14）格外有说服力，因为 Procedural 正是 Multi-step Mode 在理论上被设计来攻击的领域。
+4. **选择性 loss masking 是外科手术式的。** SFT loss 只在 (a) 成功图像、(b) 诊断+修复文本上计算——绝不在失败图像 token 上计算。这避免了模型把 Reflection 模式本应*修正*的那些瑕疵内化进去。Reflection 消融（加上 Reflection 让 KRIS 75.21 → 78.24）说明该 masking 在实践中是非平凡监督。
+5. **附录 E 公开了 prompt 原文。** 四个 ANALYZER 评分 prompt、Reflection prompt、Multi-step Decomposition prompt 都在图 11–14 中逐字给出——LMM-as-judge 部分（同时影响训练与评估）的可复现性因此显著提升。
 
 ---
 
-## 8. Comparison with Concurrent / Related Work
+## 7. 弱点与局限
 
-| Work | Problem framing | Backbone / size | Reasoning paradigm | Headline metric (KRIS / Omni / GenEval) | Code / Weights |
+1. **闭环 judge 偏置。** 同一个 LMM 家族（Qwen3-VL-235B）既生成 SFT 监督（通过 ANALYZER），又驱动 RL outcome reward（公式 2）和 step-wise reward（公式 4），还在 KRIS-Bench 等 benchmark 中是主要 judge。这造成了强烈的“judge × policy”耦合——policy 可能在优化*Qwen3-VL 喜欢打高分的对象*，而非人类评估更好的对象。论文中完全缺失的 held-out 人工评估本可以闭合此缺口。
+2. **没有人工评估，没有统计显著性。** 所有数字都是单 seed 的点估计，没有置信区间；像 +0.07 KRIS 分（复杂度惩罚付出的代价）这么小的差异，完全在合理噪声范围内。整套方案高成本高投入；选择完整系统而非 `w/o Complexity Penalty` 的实证理由几乎完全建立在 Avg. Imgs 上。
+3. **产出数与数据集过滤率缺失。** §3 提到“专业知识样本被过滤掉”，但*未*说明被过滤的反思失败占比有多少最终变成 multi-step 样本——这关系到三模式数据比例。10K / 20K / 20K 的 split 是直接断言的，而不是从透明的产出计算推导出来的。
+4. **GENERATOR 监督质量受 Gemini-3-Pro-Image 制约。** 数据集中“成功”的轨迹 ground truth 由 Gemini 输出。任何 Gemini 的系统偏好（风格偏好、水印、身份保持倾向）都会被 SAIR 继承。论文未分析此依赖。
+5. **标注员细节未公开。** “每条样本两位标注员”这一点说了，但池规模、资质、报酬、IAA 都缺。在没有 IAA 的情况下，严格的“一致接受”规则可能过于保守（拒掉好样本）也可能区分能力不足（让边缘样本通过），读者无法判断是哪一种。
+6. **硬件与可复现成本不透明。** “内部专有分布式基础设施”对外部复现等于零信息。SFT、RL 各自的 GPU 类型 / 数量 / 时长 / 显存都没汇报。仅凭论文无法估计重训成本。
+7. **单主干、单分辨率。** 所有实验都在 512×512 的 Emu3.5 上。SAIR 的提升能否迁移到 Janus-Pro / BAGEL / OmniGen2，未知；能否在 1024×1024 上保持，未知。没有 scaling 曲线。
+8. **生成器—验证器不对称未被处理。** 数据生成时使用的 (Qwen3-VL ANALYZER + Gemini-3-Pro GENERATOR) 组合明显*强于* (Emu3.5 训出的) student。这对蒸馏没问题，但意味着 SAIR 的能力上限被 Gemini 的能力锁定——student 不能超越 teacher 的覆盖范围。论文未实现 RLAIF 风格的 on-policy 数据刷新。
+
+---
+
+## 8. 与并发 / 相关工作的对比
+
+| 工作 | 问题框定 | 主干 / 规模 | 推理范式 | 头号指标（KRIS / Omni / GenEval） | 代码 / 权重 |
 |------|-----------------|-----------------|---------------------|-----------------------------------------|----------------|
-| [Uni-CoT (Qin et al. 2025)](https://arxiv.org/abs/2508.05606) | Unified text+vision CoT | Open hybrid | Plan-then-Generate (static) | – / 7.89 / 0.83 | Code released |
-| [VACoT (Ye et al. 2025d)](https://arxiv.org/abs/2512.19686) | Visual-aware CoT for unified models | Open AR | Plan-then-Generate, visual-aware | – / 8.26 / 0.84 | Code released |
-| [ReasonEdit (Yin et al. 2025)](https://arxiv.org/abs/2511.22625) | Reasoning-enhanced editing | Open editing model | Generate-then-Reflect | 61.57 / – / – | Code released |
-| [Thinking-while-Generating (Guo et al. 2025a)](https://arxiv.org/abs/2511.16671) | Interleaved text+pixel reasoning | Unified | Interleaved generate-and-think | not on these benchmarks | Code? |
-| [Emu3.5 (Cui et al. 2025)](https://arxiv.org/abs/2510.26583) | Native multimodal world model | Open AR (8B+) | None (direct) | 73.75 / 8.82 / 0.86 | Open |
-| **SAIR (this work)** | Adaptive routing across 3 modes | Emu3.5 + SFT + GRPO | All three, learned router | **80.18 / 9.35 / 0.89** | Code only |
+| [Uni-CoT (Qin et al. 2025)](https://arxiv.org/abs/2508.05606) | 文本+视觉统一 CoT | 开源混合 | Plan-then-Generate（静态） | – / 7.89 / 0.83 | 已开源 |
+| [VACoT (Ye et al. 2025d)](https://arxiv.org/abs/2512.19686) | 统一模型的视觉感知 CoT | 开源 AR | Plan-then-Generate，视觉感知 | – / 8.26 / 0.84 | 已开源 |
+| [ReasonEdit (Yin et al. 2025)](https://arxiv.org/abs/2511.22625) | 推理增强编辑 | 开源编辑模型 | Generate-then-Reflect | 61.57 / – / – | 已开源 |
+| [Thinking-while-Generating (Guo et al. 2025a)](https://arxiv.org/abs/2511.16671) | 文本+像素交错推理 | 统一模型 | 交错 generate-and-think | 不在这些 benchmark 上 | 代码？ |
+| [Emu3.5 (Cui et al. 2025)](https://arxiv.org/abs/2510.26583) | 原生多模态世界模型 | 开源 AR (8B+) | 无（直接生成） | 73.75 / 8.82 / 0.86 | 开源 |
+| **SAIR（本文）** | 三模式自适应路由 | Emu3.5 + SFT + GRPO | 全部三种，配学习路由 | **80.18 / 9.35 / 0.89** | 仅代码 |
 
-The closest concurrent works are Uni-CoT and VACoT (both Plan-then-Generate variants) and ReasonEdit (Generate-then-Reflect). SAIR's distinguishing claim is its **learned router** — it can collapse to direct generation when prompts are simple, an option none of the comparison entries offer.
+最近的并发工作是 Uni-CoT 与 VACoT（都是 Plan-then-Generate 变体）以及 ReasonEdit（Generate-then-Reflect）。SAIR 的关键差异是其**学到的路由器**——在 prompt 简单时它能塌缩到直接生成，这一选项是表中其他对比方法都没有的。
 
 ---
 
-## 9. Reproducibility Audit
+## 9. 可复现性审计
 
-| Item | Released? | Notes |
+| 项目 | 是否发布 | 备注 |
 |------|-----------|-------|
-| Code | ✅ (claimed) | "The code is released at GitHub" — link not in PDF abstract; expected on the paper's project page. |
-| SFT weights | ❌ | Not mentioned. |
-| RL-tuned weights | ❌ | Not mentioned. |
-| 50K SFT dataset | ❌ | Not released — entirely synthesised by Gemini-3-Pro + Qwen3-VL. Re-synthesis requires API access to both models. |
-| 50K RL dataset (curation script) | ❌ | Source corpora are public but per-sample selection criteria are not specified. |
-| Eval datasets | ✅ | GenEval / KRIS-Bench / OmniContext are public. |
-| ANALYZER score prompts | ✅ | App. E, verbatim. |
-| Reflection prompt | ✅ | App. E, Fig. 13, verbatim. |
-| Multi-step decomposition prompt | ✅ | App. E, Fig. 14, verbatim. |
-| Hyperparameters | ✅ partial | Table 4 lists batch / LR / KL / α-weights / ε but omits steps, GPU spec, total tokens. |
-| Hardware spec | ❌ | "Internal proprietary distributed infrastructure". |
-| Random seeds | ❌ | None reported. |
-| Statistical tests | ❌ | None reported. |
+| 代码 | ✅（声称） | “代码已在 GitHub 发布”——PDF 摘要中无链接，预期出现在论文项目页。 |
+| SFT 权重 | ❌ | 未提及。 |
+| RL 微调权重 | ❌ | 未提及。 |
+| 50K SFT 数据集 | ❌ | 未发布——完全由 Gemini-3-Pro + Qwen3-VL 合成。重新合成需要这两个模型的 API 访问权限。 |
+| 50K RL 数据集（采集脚本） | ❌ | 来源语料公开，但每条样本的筛选标准未指明。 |
+| 评测数据集 | ✅ | GenEval / KRIS-Bench / OmniContext 都是公开的。 |
+| ANALYZER 评分 prompt | ✅ | 附录 E，原文。 |
+| Reflection prompt | ✅ | 附录 E 图 13，原文。 |
+| Multi-step 分解 prompt | ✅ | 附录 E 图 14，原文。 |
+| 超参 | ✅ 部分 | 表 4 列出了 batch / LR / KL / α-权重 / ε 但缺步数、GPU 规格、总 token。 |
+| 硬件规格 | ❌ | “内部专有分布式基础设施”。 |
+| 随机 seed | ❌ | 未汇报。 |
+| 统计检验 | ❌ | 未汇报。 |
 
-**Verdict.** **Reproducibility is partial — about a 4 / 7.** The recipe (data pipeline + prompts + RL formulation) is fully specified; an external lab with API credits to Qwen3-VL-235B and Gemini-3-Pro-Image and ≥hundreds of GPU-days could plausibly retrace the entire pipeline. However, the lack of weight release means downstream applications must redo SFT+RL from scratch, and the lack of human evaluation / seed averaging means small effect sizes (notably the Complexity-Penalty trade) cannot be re-checked at face value. The rated reproducibility is good for *understanding the method*, weak for *consuming the model*.
+**结论。** **可复现性部分——大约 4 / 7 分。** 配方（数据管线 + prompt + RL 公式）描述完整；具备 Qwen3-VL-235B 与 Gemini-3-Pro-Image API 额度并有数百 GPU 天预算的外部团队，理论上能够重走整条管线。但因为没有发布权重，下游应用必须从零做 SFT+RL；又因为没有人工评测和 seed 平均，最关键的小效应差异（特别是复杂度惩罚的取舍）无法二次核验。可复现性的评级在“理解方法”这一目标上是好的，在“消费模型”这一目标上是弱的。
 
 ---
 
-## 10. Discussion Notes
+## 10. 讨论备注
 
-*(No follow-up Q&A in this initial deep-read. Future questions and clarifications will be appended here.)*
+*（首次深读尚无后续 Q&A。后续问题与澄清将追加于此。）*
